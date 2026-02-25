@@ -40,25 +40,28 @@ def verificar_webhook():
 def recibir_mensajes():
     datos = request.get_json()
     try:
+        # Extraemos el mensaje y el número que nos escribe
         if 'messages' in datos['entry'][0]['changes'][0]['value']:
             mensaje_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['text']['body']
             numero_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['from']
             
-            print(f"Mensaje de {numero_usuario}: {mensaje_usuario}")
+            # --- LIMPIEZA DEL NÚMERO (IMPORTANTE PARA MÉXICO) ---
+            # Si el número tiene 13 dígitos y empieza con 521, le quitamos el '1'
+            if numero_usuario.startswith("521") and len(numero_usuario) == 13:
+                # Esto cambia 52155... por 5255...
+                numero_usuario = "52" + numero_usuario[3:]
+            
+            print(f"Número procesado para responder: {numero_usuario}")
 
-            try:
-                # Intentamos con el nombre de modelo más básico
-                model = genai.GenerativeModel('gemini-pro')
-                respuesta_ia = model.generate_content(mensaje_usuario)
-                texto_final = respuesta_ia.text
-            except Exception as e_ia:
-                print(f"Fallo la IA: {e_ia}")
-                texto_final = "Hola! Recibí tu mensaje pero mi cerebro de IA está tardando en responder. Intenta de nuevo."
-
-            enviar_mensaje_whatsapp(texto_final, numero_usuario)
+            # Generamos respuesta con Gemini
+            model = genai.GenerativeModel('gemini-pro')
+            respuesta_ia = model.generate_content(mensaje_usuario)
+            
+            # Enviamos la respuesta de la IA
+            enviar_mensaje_whatsapp(respuesta_ia.text, numero_usuario)
             
     except Exception as e:
-        print(f"Error general: {e}")
+        print(f"Error procesando el mensaje: {e}")
         
     return make_response("EVENT_RECEIVED", 200)
 
