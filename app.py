@@ -9,7 +9,7 @@ app = Flask(__name__)
 TOKEN_VERIFICACION = "estudiante_ia_2026"
 ACCESS_TOKEN = "EAANLEpqpXc0BQ0ua0nxGVpZAdeM3N6ZAWIt8DLtINQA8AyesM8YumfTZAiZA6CTAZA3NzZAGKCK0J7eBRH0OZAunPDyNE2V2xZAN2bDjFX18ZCJBdoKaLWPZBZBxK7z3peZCTibFvzVxcEwK3vhgLNQtAl0Sp2jxsOWIiJ31c7rOUE7Vx716RmcZBkZAeU3OqZAGqW7PVW3KJaxk1UZCKVZC4YokIRtRZCUZC6PZCJftbEvO9DEnWoWMofqVvvSpeFgZCqcHxqe1ZCSJ3WOeZBudO9VD7B8oIysUaE5"
 PHONE_ID = "993609860504120"
-GEMINI_KEY = "AIzaSyCsCCwscxMzKPutn4HxD0Uq8WFRbP90Dp8"
+GEMINI_KEY = "AIzaSyAQcC8gkEEltPtu-3MkfPpf7sCUBYEgwA0"
 
 genai.configure(api_key=GEMINI_KEY)
 
@@ -72,6 +72,10 @@ def recibir_mensajes():
         print(f"Error general: {e}")
         
     return make_response("EVENT_RECEIVED", 200)
+    return make_response("EVENT_RECEIVED", 200)
+
+if __name__ == '__main__':
+    app.run(port=10000, host='0.0.0.0')
 
 if __name__ == '__main__':
     app.run(port=10000, host='0.0.0.0')
