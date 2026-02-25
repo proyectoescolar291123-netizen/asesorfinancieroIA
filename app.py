@@ -7,13 +7,13 @@ app = Flask(__name__)
 
 # --- 1. CONFIGURACIÓN (RELLENA ESTO CON TUS DATOS) ---
 TOKEN_VERIFICACION = "estudiante_ia_2026"
-ACCESS_TOKEN = "EAANLEpqpXc0BQ0EO7FpcFZBhoZB3lBpBJOZCWJAU648KgbfoVRZBpARQWbTVZCLEf88bqG64JTX4tNrnpIqfNbIp4RpRo1BAxmSmkhq53NnGuVrA9bhpMgw172Gg98DSqZAvqcCZBSiYOLZB6XVgOWNoJ4grosZABkTt2Wpur7LXfg5oF8mJUU915MbHDygWkItWRQnRyWcuCQ0MYGGuebyuRWZB2XF1ElBdMjx0A5O4cyw77dtZC1Cj30n8td8ZA7ZCZB3YjX7LGV4I1WD7t5ZCfLcZCuyW"
+ACCESS_TOKEN = "EAANLEpqpXc0BQ9pZCsvUSbWdu7QdnA8KOEcm37ig5G51ZAiZA5pup6DFvRlrwFdwCZBflHcvZBRYJocmZC2E3ZB8CJ505Ae8m4vXSbnHJoC2ufWzI6oPMZAbLhGDBUDGw7tREaCZB1B6xEGrwtykY4I6xyqmeusi535bLonPUM390H4L8fc4gPXvMV1lQPURa0AdlsBQMEQkUKIdf4yWfWApqUkAZCKuO1uGvQ4tLnp1aqApx1C4SBZBEoT1vXk9GdaENZBYrpcGvUSBDWvtt0e8H4gb"
 PHONE_ID = "993609860504120"
 GEMINI_KEY = "AIzaSyCsCCwscxMzKPutn4HxD0Uq8WFRbP90Dp8"
 
 # Configuración de Gemini
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-pro')
 
 PROMPT_SISTEMA = (
     "Eres un asesor financiero experto para micronegocios. "
