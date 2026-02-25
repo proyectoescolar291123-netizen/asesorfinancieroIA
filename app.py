@@ -5,7 +5,7 @@ import google.generativeai as genai
 
 app = Flask(__name__)
 
-# --- 1. CONFIGURACIÓN (REVISA TUS LLAVES) ---
+# --- 1. CONFIGURACIÓN ---
 TOKEN_VERIFICACION = "estudiante_ia_2026"
 ACCESS_TOKEN = "EAANLEpqpXc0BQ0ua0nxGVpZAdeM3N6ZAWIt8DLtINQA8AyesM8YumfTZAiZA6CTAZA3NzZAGKCK0J7eBRH0OZAunPDyNE2V2xZAN2bDjFX18ZCJBdoKaLWPZBZBxK7z3peZCTibFvzVxcEwK3vhgLNQtAl0Sp2jxsOWIiJ31c7rOUE7Vx716RmcZBkZAeU3OqZAGqW7PVW3KJaxk1UZCKVZC4YokIRtRZCUZC6PZCJftbEvO9DEnWoWMofqVvvSpeFgZCqcHxqe1ZCSJ3WOeZBudO9VD7B8oIysUaE5"
 PHONE_ID = "993609860504120"
@@ -48,22 +48,22 @@ def recibir_mensajes():
             
             print(f"Número corregido: {numero_usuario}")
 
-            # --- CEREBRO CON PLAN B ---
+            # --- CEREBRO ACTUALIZADO ---
             try:
-                # Intentamos con el nombre que suele funcionar en 2026
-                model = genai.GenerativeModel('models/gemini-1.5-flash')
+                # El nombre 'gemini-1.5-flash' es el estándar actual
+                model = genai.GenerativeModel('gemini-1.5-flash')
                 respuesta_ia = model.generate_content(mensaje_usuario)
                 texto_final = respuesta_ia.text
             except Exception as e_ia:
-                print(f"Fallo Gemini con nombre largo: {e_ia}")
+                print(f"Fallo Gemini 1.5: {e_ia}")
+                # Segundo intento con modelo Pro si el Flash falla
                 try:
-                    # Segundo intento con nombre corto
-                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    model = genai.GenerativeModel('gemini-1.0-pro')
                     respuesta_ia = model.generate_content(mensaje_usuario)
                     texto_final = respuesta_ia.text
                 except Exception as e_ia2:
-                    print(f"Fallo Gemini con nombre corto: {e_ia2}")
-                    texto_final = "Sigo en mantenimiento, pero ya casi despierto."
+                    print(f"Fallo total IA: {e_ia2}")
+                    texto_final = "¡Hola! Ya puedo recibir tus mensajes, pero mi cerebro de IA está teniendo un pequeño ajuste técnico. Soy el asesor del Equipo 7."
 
             # Enviamos respuesta
             enviar_mensaje_whatsapp(texto_final, numero_usuario)
