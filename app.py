@@ -12,7 +12,7 @@ PHONE_ID = "993609860504120"
 GEMINI_KEY = "AIzaSyCsCCwscxMzKPutn4HxD0Uq8WFRbP90Dp8"
 
 genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-pro')
 
 PROMPT_SISTEMA = (
     "Eres un asesor financiero experto para micronegocios. "
