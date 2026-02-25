@@ -1,2 +1,4 @@
 flask
 gunicorn
+google-generativeai
+requests
