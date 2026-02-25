@@ -1,4 +1,4 @@
 flask
-gunicorn
-google-generativeai
 requests
+gunicorn
+google-generativeai==0.8.3
