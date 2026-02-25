@@ -50,13 +50,20 @@ def recibir_mensajes():
 
             # --- CEREBRO CON PLAN B ---
             try:
-                # Usamos el nombre de modelo más actualizado
-                model = genai.GenerativeModel('gemini-1.5-flash-latest')
+                # Intentamos con el nombre que suele funcionar en 2026
+                model = genai.GenerativeModel('models/gemini-1.5-flash')
                 respuesta_ia = model.generate_content(mensaje_usuario)
                 texto_final = respuesta_ia.text
             except Exception as e_ia:
-                print(f"Fallo Gemini: {e_ia}")
-                texto_final = "¡Hola! Recibí tu mensaje, pero mi cerebro de IA está en mantenimiento. Soy el asesor del Equipo 7."
+                print(f"Fallo Gemini con nombre largo: {e_ia}")
+                try:
+                    # Segundo intento con nombre corto
+                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    respuesta_ia = model.generate_content(mensaje_usuario)
+                    texto_final = respuesta_ia.text
+                except Exception as e_ia2:
+                    print(f"Fallo Gemini con nombre corto: {e_ia2}")
+                    texto_final = "Sigo en mantenimiento, pero ya casi despierto."
 
             # Enviamos respuesta
             enviar_mensaje_whatsapp(texto_final, numero_usuario)
