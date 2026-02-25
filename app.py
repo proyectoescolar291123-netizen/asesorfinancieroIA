@@ -23,7 +23,6 @@ def enviar_mensaje_whatsapp(texto, numero):
         "text": {"body": texto}
     }
     r = requests.post(url, headers=headers, json=data)
-    print(f"Respuesta de Meta: {r.status_code}")
     return r.status_code
 
 @app.route('/webhook', methods=['GET'])
@@ -31,7 +30,7 @@ def verificar_webhook():
     token = request.args.get('hub.verify_token')
     challenge = request.args.get('hub.challenge')
     if token == TOKEN_VERIFICACION:
-        return make_response(challenge, 200)
+        return make_response(str(challenge), 200)
     return "Error", 403
 
 @app.route('/webhook', methods=['POST'])
@@ -42,40 +41,23 @@ def recibir_mensajes():
             mensaje_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['text']['body']
             numero_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['from']
             
-            # --- LIMPIEZA DEL NÚMERO ---
             if numero_usuario.startswith("521") and len(numero_usuario) == 13:
                 numero_usuario = "52" + numero_usuario[3:]
-            
-            print(f"Número corregido: {numero_usuario}")
 
-            # --- CEREBRO ACTUALIZADO ---
+            # --- IA ---
             try:
-                # El nombre 'gemini-1.5-flash' es el estándar actual
                 model = genai.GenerativeModel('gemini-1.5-flash')
                 respuesta_ia = model.generate_content(mensaje_usuario)
                 texto_final = respuesta_ia.text
-            except Exception as e_ia:
-                print(f"Fallo Gemini 1.5: {e_ia}")
-                # Segundo intento con modelo Pro si el Flash falla
-                try:
-                    model = genai.GenerativeModel('gemini-1.0-pro')
-                    respuesta_ia = model.generate_content(mensaje_usuario)
-                    texto_final = respuesta_ia.text
-                except Exception as e_ia2:
-                    print(f"Fallo total IA: {e_ia2}")
-                    texto_final = "¡Hola! Ya puedo recibir tus mensajes, pero mi cerebro de IA está teniendo un pequeño ajuste técnico. Soy el asesor del Equipo 7."
+            except Exception as e:
+                print(f"Error IA: {e}")
+                texto_final = "Hola, soy el asesor del equipo 7. Mi cerebro de IA está en ajuste, pero la conexión es exitosa."
 
-            # Enviamos respuesta
             enviar_mensaje_whatsapp(texto_final, numero_usuario)
-            
-    except Exception as e:
-        print(f"Error general: {e}")
+    except:
+        pass
         
     return make_response("EVENT_RECEIVED", 200)
-    return make_response("EVENT_RECEIVED", 200)
-
-if __name__ == '__main__':
-    app.run(port=10000, host='0.0.0.0')
 
 if __name__ == '__main__':
     app.run(port=10000, host='0.0.0.0')
