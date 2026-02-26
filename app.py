@@ -9,7 +9,7 @@ app = Flask(__name__)
 TOKEN_VERIFICACION = "estudiante_ia_2026"
 ACCESS_TOKEN = "EAANLEpqpXc0BQ7Ez7k0sbzI5Xb3FqZCpyekWdE7MlumPpVN7txzgRC6sZCI59QBVF47cZCQdXPs7ic8J2H7EKyd4MmRIwDbYfwBq8DmxJ2xBVycEHDLHWwkHCCAiIPZANnCtdAtqtzJNVZA1wDZCjTffN7XbzyD28HEY7JIGCZA76Latd1nAmEBAOlIu3OR9UNF4NL1UR31FLMuCo2rRGQ5CKS5h4DyaIpGXzBJr63VZBIvDyilVHxZBNJWj6CDRfTkgxbnETNIb3UQ2fHLQZAc0qf"
 PHONE_ID = "993609860504120"
-GEMINI_KEY = "AIzaSyAQcC8gkEEltPtu-3MkfPpf7sCUBYEgwA0"
+GEMINI_KEY = "AIzaSyBwnf34jZjEixhRkB-k6iEZquNIzbcacfg"
 
 genai.configure(api_key=GEMINI_KEY)
 
@@ -37,25 +37,25 @@ def verificar_webhook():
 def recibir_mensajes():
     datos = request.get_json()
     try:
+        # --- CAPTURAMOS EL MENSAJE ---
         if 'messages' in datos['entry'][0]['changes'][0]['value']:
             mensaje_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['text']['body']
             numero_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['from']
-            
-            if numero_usuario.startswith("521") and len(numero_usuario) == 13:
-                numero_usuario = "52" + numero_usuario[3:]
 
-            # --- IA ---
+            # --- LÓGICA DE IA ---
             try:
                 model = genai.GenerativeModel('gemini-1.5-flash')
                 respuesta_ia = model.generate_content(mensaje_usuario)
                 texto_final = respuesta_ia.text
             except Exception as e:
                 print(f"Error IA: {e}")
-                texto_final = "Hola, soy el asesor del equipo 7. Mi cerebro de IA está en ajuste, pero la conexión es exitosa."
+                texto_final = f"Error de IA: {str(e)[:50]}"
 
+            # --- ENVIAMOS RESPUESTA ---
             enviar_mensaje_whatsapp(texto_final, numero_usuario)
-    except:
-        pass
+            
+    except Exception as e:
+        print(f"Error general: {e}")
         
     return make_response("EVENT_RECEIVED", 200)
 
