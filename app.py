@@ -60,4 +60,6 @@ def recibir_mensajes():
     return make_response("EVENT_RECEIVED", 200)
 
 if __name__ == '__main__':
-    app.run(port=10000, host='0.0.0.0')
+    # Render usa la variable de entorno PORT, si no existe usa el 10000
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
