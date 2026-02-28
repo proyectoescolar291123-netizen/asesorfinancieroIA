@@ -6,11 +6,13 @@ import google.generativeai as genai
 app = Flask(__name__)
 
 # --- 1. CONFIGURACIÓN ---
+# Estos valores son fijos, pero el GEMINI_KEY ahora es secreto
 TOKEN_VERIFICACION = "estudiante_ia_2026"
-ACCESS_TOKEN = "EAANLEpqpXc0BQwzEp5H6cZBxXVDfGnbcJoZA1n6oTQlmPkFxV0lBlvZAt3b1OeIcV98a5OtpvJiwf54wS8KUUdf1w9ZCZBuik1ebML181qyqZBWtLGfk5ZBgsiiDZAimaObqhrxVspZClavBIy3UvRUbYoyZBnxgrMXDRVUTI2hgR1ucYhVZBQPLlMFtLrBx6Bl6BoT8vUW27EMzZAI3Qf0qOZASkeEeWIM4e9PBCLTEqmO7QibRKNKTOmnIhlQh05uZBUv2zbARNZAzjXUkr6pTZCELP5hp"
+ACCESS_TOKEN = "EAANLEpqpXc0BQx9TPkHZBWbkGyu88I4Jdg68UZAUndbCiseBdOnQ560KlMHsVcZC389ThFqiHqbdkjZBkDf4g1HajE3z3MNikd7yIXY3jy8TP1yzkaWZARASAw3GkjB7n22GdvHlgVNjZANh4azd4xENZAZBqgivQLzvk7jQ03gt64WaOJaroPcwSRXfXlkGJYjjhjGpUsExOhmgnUn9JIuaAL8uYw9fJ6VEFPswDEofxKeSzr8RnAErt0ZAqZAGlcOCFScjrR0TlP5M7TaANF0ertNgZDZD"
 PHONE_ID = "993609860504120"
-GEMINI_KEY = "AIzaSyBwnf34jZjEixhRkB-k6iEZquNIzbcacfg"
 
+# Seguridad: Render leerá la clave desde sus ajustes, no desde el código
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_KEY)
 
 def enviar_mensaje_whatsapp(texto, numero):
@@ -44,12 +46,13 @@ def recibir_mensajes():
 
             # --- LÓGICA DE IA ---
             try:
+                # Usamos el modelo estable
                 model = genai.GenerativeModel('gemini-1.5-flash')
                 respuesta_ia = model.generate_content(mensaje_usuario)
                 texto_final = respuesta_ia.text
             except Exception as e:
                 print(f"Error IA: {e}")
-                texto_final = f"Error de IA: {str(e)[:50]}"
+                texto_final = "Lo siento, tuve un problema al procesar tu mensaje. ¿Podrías repetirlo?"
 
             # --- ENVIAMOS RESPUESTA ---
             enviar_mensaje_whatsapp(texto_final, numero_usuario)
@@ -60,6 +63,5 @@ def recibir_mensajes():
     return make_response("EVENT_RECEIVED", 200)
 
 if __name__ == '__main__':
-    # Render usa la variable de entorno PORT, si no existe usa el 10000
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
