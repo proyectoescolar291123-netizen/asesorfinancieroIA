@@ -50,7 +50,7 @@ def recibir_mensajes():
             try:
                 # Esta es la forma moderna de llamar a Gemini 1.5 Flash
                 response = client.models.generate_content(
-                    model="gemini-1.5-flash",
+                    model="gemini-1.0-pro",
                     contents=mensaje_usuario
                 )
                 texto_final = response.text
