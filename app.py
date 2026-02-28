@@ -52,7 +52,7 @@ def recibir_mensajes():
 
             try:
                 # Cambiamos a gemini-1.5-flash-latest para máxima compatibilidad
-                model = genai.GenerativeModel('gemini-1.5-flash-latest')
+                model = genai.GenerativeModel('gemini-pro')
                 respuesta_ia = model.generate_content(mensaje_usuario)
                 texto_final = respuesta_ia.text
             except Exception as e:
