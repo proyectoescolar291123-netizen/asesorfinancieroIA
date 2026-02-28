@@ -13,7 +13,7 @@ PHONE_ID = "993609860504120"
 # Configuramos la IA desde el inicio
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_KEY:
-    genai.configure(api_key=GEMINI_KEY)
+    genai.configure(api_key=GEMINI_KEY, transport='rest')
     print("Clave de Gemini cargada correctamente.")
 else:
     print("ERROR: No se encontró la GEMINI_API_KEY en las variables de entorno.")
@@ -52,7 +52,7 @@ def recibir_mensajes():
 
             try:
                 # Cambiamos a gemini-1.5-flash-latest para máxima compatibilidad
-                model = genai.GenerativeModel('gemini-pro')
+                model = genai.GenerativeModel(model_name='gemini-1.5-flash')
                 respuesta_ia = model.generate_content(mensaje_usuario)
                 texto_final = respuesta_ia.text
             except Exception as e:
