@@ -47,7 +47,7 @@ def recibir_mensajes():
             # --- LÓGICA DE IA ---
             try:
                 # Usamos el modelo estable
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                model = genai.GenerativeModel(model_name='models/gemini-1.5-flash')
                 respuesta_ia = model.generate_content(mensaje_usuario)
                 texto_final = respuesta_ia.text
             except Exception as e:
