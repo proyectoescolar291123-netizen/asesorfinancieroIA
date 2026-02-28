@@ -11,7 +11,7 @@ ACCESS_TOKEN = "EAANLEpqpXc0BQx9TPkHZBWbkGyu88I4Jdg68UZAUndbCiseBdOnQ560KlMHsVcZ
 PHONE_ID = "993609860504120"
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Inicializamos el cliente de la nueva librería
+# Inicializamos el cliente
 client = genai.Client(api_key=GEMINI_KEY)
 
 def enviar_mensaje_whatsapp(texto, numero):
@@ -28,7 +28,7 @@ def enviar_mensaje_whatsapp(texto, numero):
 
 @app.route("/")
 def index():
-    return "Servidor del Asesor Financiero con Nueva Librería Activo", 200
+    return "Servidor del Asesor Financiero (EBC 2026) Activo", 200
 
 @app.route('/webhook', methods=['GET'])
 def verificar_webhook():
@@ -46,17 +46,26 @@ def recibir_mensajes():
             mensaje_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['text']['body']
             numero_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['from']
 
-            # --- LÓGICA CON LA NUEVA LIBRERÍA google-genai ---
+            # --- LÓGICA IA: CORRECCIÓN DE VALIDACIÓN (Estilo Dify) ---
             try:
-                # Esta es la forma moderna de llamar a Gemini 1.5 Flash
+                # Forzamos gemini-1.5-pro para saltar el error de validación
                 response = client.models.generate_content(
-                    model="gemini-1.0-pro",
+                    model="gemini-1.5-pro",
                     contents=mensaje_usuario
                 )
                 texto_final = response.text
             except Exception as e:
-                print(f"Error IA (Nueva Librería): {e}")
-                texto_final = "Hola! Estoy actualizando mis sistemas financieros. ¿Podrías repetir tu pregunta?"
+                print(f"Error con Pro: {e}. Intentando Flash...")
+                try:
+                    # Intento de respaldo con gemini-1.5-flash
+                    response = client.models.generate_content(
+                        model="gemini-1.5-flash",
+                        contents=mensaje_usuario
+                    )
+                    texto_final = response.text
+                except Exception as e2:
+                    print(f"Error definitivo IA: {e2}")
+                    texto_final = "Hola! Mi sistema está tardando un poco en responder. ¿Podrías intentar de nuevo en un momento?"
 
             enviar_mensaje_whatsapp(texto_final, numero_usuario)
             
