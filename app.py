@@ -7,11 +7,12 @@ app = Flask(__name__)
 
 # --- 1. CONFIGURACIÓN ---
 TOKEN_VERIFICACION = "estudiante_ia_2026"
-ACCESS_TOKEN = "EAANLEpqpXc0BQ5K07zOXf2unNCVjTMAdV7eR2Jx2XZCCLmVZA9gWT5nmlfnITxRcuWkAYDQcQsI38uAwZCTBstXAZAe7sFIN3GcZB34BJ2v0CmQm9tRHXJrjC3FAbZCrruvhrwE4v3YABMtF1AppyVRuylkkYD9cF3vD54vNUGRGgVxygQPjE59Yzx0ildoWR0Xx8AnjkyaDDsjNKQycWFFBnGxPjhJHxrkCuT0PZAzRrdN4BSP2WJdt6SnU3JpOrccVZBYEdfzPZBYCZAcG47fSwn"
+# Este es el token que te funcionó en el curl
+ACCESS_TOKEN = "EAANLEpqpXc0BQZBX1ButbAghEjtCqFbjYEiMToHVRNpCZC0lGyIiDm5GAW1zgTPoHLGkCVvq6yhFsm0thBOtOZBNd9XvjdMkvtURlNu93duJTov17c9pZAnvqP7TrZCxZBkSCHb7ZBDTU0cfCHUQNkK4c3AwxT6V1UgXI4vlDPC1Q0fxkPExQ0xHjBsxAZC9lqZC6odK4CHXK3mfI8vCcmEPVTbFZATSZAY8PaJt5ZCoNyKZA65Y8qesn1jZAMrrZAr7ilUJRJCmG93bqD6VZBejF2mktDUx"
 PHONE_ID = "993609860504120"
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Inicializamos el cliente con tu nueva clave
+# Inicializamos el cliente
 client = genai.Client(api_key=GEMINI_KEY)
 
 def enviar_mensaje_whatsapp(texto, numero):
@@ -24,11 +25,13 @@ def enviar_mensaje_whatsapp(texto, numero):
         "text": {"body": texto}
     }
     r = requests.post(url, headers=headers, json=data)
+    # Imprimimos el resultado del envío para debug
+    print(f"DEBUG WHATSAPP: Status {r.status_code} - Response: {r.text}")
     return r.status_code
 
 @app.route("/")
 def index():
-    return "Asesor Financiero EBC - Gemini 3 Activo", 200
+    return "Asesor Financiero EBC - Gemini 3 Activo y Monitoreado", 200
 
 @app.route('/webhook', methods=['GET'])
 def verificar_webhook():
@@ -42,20 +45,24 @@ def verificar_webhook():
 def recibir_mensajes():
     datos = request.get_json()
     try:
+        # Detectamos si es un mensaje de texto que llega
         if 'messages' in datos['entry'][0]['changes'][0]['value']:
             mensaje_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['text']['body']
             numero_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['from']
+            
+            print(f"MENSAJE RECIBIDO de {numero_usuario}: {mensaje_usuario}")
 
-            # --- LÓGICA CON GEMINI 3 FLASH (NUEVA CUENTA) ---
+            # --- LÓGICA CON GEMINI 3 FLASH ---
             try:
                 response = client.models.generate_content(
                     model="gemini-3-flash-preview",
                     contents=mensaje_usuario
                 )
                 texto_final = response.text
+                print(f"IA RESPONDIÓ EXITOSAMENTE: {texto_final[:50]}...") # Solo los primeros 50 caracteres
             except Exception as e:
                 print(f"Error con Gemini 3: {e}")
-                # Respaldo por si el preview está saturado
+                # Respaldo
                 try:
                     response = client.models.generate_content(
                         model="gemini-1.5-flash",
@@ -65,10 +72,12 @@ def recibir_mensajes():
                 except:
                     texto_final = "Hola! Soy tu asesor financiero. Mi sistema se está actualizando, ¿puedes repetir tu duda?"
 
+            # Enviamos la respuesta
             enviar_mensaje_whatsapp(texto_final, numero_usuario)
             
     except Exception as e:
-        print(f"Error general: {e}")
+        # Esto nos dirá si Meta mandó algo que no era un mensaje (como un 'read receipt')
+        pass
         
     return make_response("EVENT_RECEIVED", 200)
 
