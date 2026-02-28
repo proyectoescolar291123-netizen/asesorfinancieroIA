@@ -45,7 +45,7 @@ def recibir_mensajes():
             # --- LÓGICA DE IA (LLAMADA DIRECTA A V1) ---
             try:
                 # Usamos la URL directa para evitar errores de versión de la librería
-                url_gemini = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
+                url_gemini = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key={GEMINI_KEY}"
                 payload = {
                     "contents": [{"parts": [{"text": mensaje_usuario}]}]
                 }
