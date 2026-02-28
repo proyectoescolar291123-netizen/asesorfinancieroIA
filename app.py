@@ -11,8 +11,12 @@ ACCESS_TOKEN = "EAANLEpqpXc0BQx9TPkHZBWbkGyu88I4Jdg68UZAUndbCiseBdOnQ560KlMHsVcZ
 PHONE_ID = "993609860504120"
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Inicializamos el cliente
-client = genai.Client(api_key=GEMINI_KEY)
+# --- 2. INICIALIZACIÓN (FORZANDO V1 ESTABLE) ---
+# Esto evita que la librería busque versiones 'beta' que te dan el error 404
+client = genai.Client(
+    api_key=GEMINI_KEY,
+    http_options={'api_version': 'v1'}
+)
 
 def enviar_mensaje_whatsapp(texto, numero):
     url = f"https://graph.facebook.com/v18.0/{PHONE_ID}/messages"
@@ -46,26 +50,26 @@ def recibir_mensajes():
             mensaje_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['text']['body']
             numero_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['from']
 
-            # --- LÓGICA IA: CORRECCIÓN DE VALIDACIÓN (Estilo Dify) ---
+            # --- LÓGICA IA: USO DE V1 ESTABLE ---
             try:
-                # Forzamos gemini-1.5-pro para saltar el error de validación
+                # Usamos gemini-1.5-flash que es el más rápido en la v1
                 response = client.models.generate_content(
-                    model="gemini-1.5-pro",
+                    model="gemini-1.5-flash",
                     contents=mensaje_usuario
                 )
                 texto_final = response.text
             except Exception as e:
-                print(f"Error con Pro: {e}. Intentando Flash...")
+                print(f"Error con Flash: {e}. Intentando Pro...")
                 try:
-                    # Intento de respaldo con gemini-1.5-flash
+                    # Intento de respaldo con gemini-1.5-pro
                     response = client.models.generate_content(
-                        model="gemini-1.5-flash",
+                        model="gemini-1.5-pro",
                         contents=mensaje_usuario
                     )
                     texto_final = response.text
                 except Exception as e2:
                     print(f"Error definitivo IA: {e2}")
-                    texto_final = "Hola! Mi sistema está tardando un poco en responder. ¿Podrías intentar de nuevo en un momento?"
+                    texto_final = "Hola! Soy tu asesor financiero. Mi sistema está terminando de cargar, ¿me repites tu duda?"
 
             enviar_mensaje_whatsapp(texto_final, numero_usuario)
             
