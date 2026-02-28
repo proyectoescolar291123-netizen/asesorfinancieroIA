@@ -1,6 +1,7 @@
 import os
 import requests
 from flask import Flask, request, make_response
+from google import genai
 
 app = Flask(__name__)
 
@@ -9,6 +10,9 @@ TOKEN_VERIFICACION = "estudiante_ia_2026"
 ACCESS_TOKEN = "EAANLEpqpXc0BQx9TPkHZBWbkGyu88I4Jdg68UZAUndbCiseBdOnQ560KlMHsVcZC389ThFqiHqbdkjZBkDf4g1HajE3z3MNikd7yIXY3jy8TP1yzkaWZARASAw3GkjB7n22GdvHlgVNjZANh4azd4xENZAZBqgivQLzvk7jQ03gt64WaOJaroPcwSRXfXlkGJYjjhjGpUsExOhmgnUn9JIuaAL8uYw9fJ6VEFPswDEofxKeSzr8RnAErt0ZAqZAGlcOCFScjrR0TlP5M7TaANF0ertNgZDZD"
 PHONE_ID = "993609860504120"
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
+
+# Inicializamos el cliente con tu nueva clave
+client = genai.Client(api_key=GEMINI_KEY)
 
 def enviar_mensaje_whatsapp(texto, numero):
     url = f"https://graph.facebook.com/v18.0/{PHONE_ID}/messages"
@@ -24,7 +28,7 @@ def enviar_mensaje_whatsapp(texto, numero):
 
 @app.route("/")
 def index():
-    return "Servidor Asesor Financiero - Modo Emergencia Activo", 200
+    return "Asesor Financiero EBC - Gemini 3 Activo", 200
 
 @app.route('/webhook', methods=['GET'])
 def verificar_webhook():
@@ -42,21 +46,24 @@ def recibir_mensajes():
             mensaje_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['text']['body']
             numero_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['from']
 
-            # --- LÓGICA IA: LLAMADA HTTP DIRECTA (Sin librerías) ---
-            url_gemini = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
-            payload = {
-                "contents": [{"parts": [{"text": mensaje_usuario}]}]
-            }
-            
-            res = requests.post(url_gemini, json=payload)
-            res_data = res.json()
-
-            if 'candidates' in res_data:
-                texto_final = res_data['candidates'][0]['content']['parts'][0]['text']
-            else:
-                # Si esto falla, imprimimos TODO para ver qué dice Google realmente
-                print(f"DEBUG GOOGLE: {res_data}")
-                texto_final = "Hola! Soy tu asesor financiero. Estamos terminando de configurar mi conexión. ¿Me repites tu duda?"
+            # --- LÓGICA CON GEMINI 3 FLASH (NUEVA CUENTA) ---
+            try:
+                response = client.models.generate_content(
+                    model="gemini-3-flash-preview",
+                    contents=mensaje_usuario
+                )
+                texto_final = response.text
+            except Exception as e:
+                print(f"Error con Gemini 3: {e}")
+                # Respaldo por si el preview está saturado
+                try:
+                    response = client.models.generate_content(
+                        model="gemini-1.5-flash",
+                        contents=mensaje_usuario
+                    )
+                    texto_final = response.text
+                except:
+                    texto_final = "Hola! Soy tu asesor financiero. Mi sistema se está actualizando, ¿puedes repetir tu duda?"
 
             enviar_mensaje_whatsapp(texto_final, numero_usuario)
             
