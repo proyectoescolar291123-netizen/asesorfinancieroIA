@@ -2,6 +2,8 @@ import os
 import requests
 from flask import Flask, request, make_response
 from google import genai
+# IMPORTANTE: Nueva importación para manejar tipos de datos
+from google.genai import types 
 
 app = Flask(__name__)
 
@@ -35,7 +37,6 @@ def descargar_audio(media_id):
     """Descarga el audio de los servidores de Meta usando su ID"""
     headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
     
-    # Paso A: Obtener la URL de descarga
     url_media = f"https://graph.facebook.com/v18.0/{media_id}"
     res = requests.get(url_media, headers=headers)
     file_url = res.json().get("url")
@@ -43,7 +44,6 @@ def descargar_audio(media_id):
     if not file_url:
         return None
 
-    # Paso B: Descargar el archivo binario (.ogg)
     archivo_binario = requests.get(file_url, headers=headers)
     path_local = f"{media_id}.ogg"
     with open(path_local, "wb") as f:
@@ -73,7 +73,6 @@ def recibir_mensajes():
             numero_usuario = msg['from']
             tipo_mensaje = msg['type']
 
-            # Inicialización de usuario
             if numero_usuario not in usuarios_memoria:
                 usuarios_memoria[numero_usuario] = {
                     "estado": "ELIGE_PLAN",
@@ -89,7 +88,6 @@ def recibir_mensajes():
             user = usuarios_memoria[numero_usuario]
             mensaje_para_ia = ""
 
-            # --- PROCESAMIENTO SEGÚN TIPO DE ENTRADA ---
             if tipo_mensaje == "text":
                 mensaje_para_ia = msg['text']['body']
             
@@ -98,17 +96,16 @@ def recibir_mensajes():
                 path_audio = descargar_audio(media_id)
                 
                 if path_audio:
-                    # Le pedimos a Gemini que escuche el archivo
                     with open(path_audio, "rb") as f:
                         audio_bytes = f.read()
                     
-                    # Usamos Gemini para transcribir/entender el audio
                     try:
+                        # --- CORRECCIÓN DE FORMATO MULTIMODAL ---
                         response_audio = client.models.generate_content(
                             model="gemini-3-flash-preview",
                             contents=[
-                                "Transcribe exactamente lo que dice este audio de un dueño de negocio:",
-                                {"mime_type": "audio/ogg", "data": audio_bytes}
+                                types.Part.from_text(text="Transcribe exactamente lo que dice este audio de un dueño de negocio:"),
+                                types.Part.from_bytes(data=audio_bytes, mime_type="audio/ogg")
                             ]
                         )
                         mensaje_para_ia = response_audio.text
@@ -117,14 +114,12 @@ def recibir_mensajes():
                         print(f"Error procesando audio: {e}")
                         mensaje_para_ia = "[Error al escuchar el audio]"
                     
-                    # Limpiamos el archivo del servidor
                     if os.path.exists(path_audio):
                         os.remove(path_audio)
                 else:
                     enviar_mensaje_whatsapp("Lo siento, no pude descargar tu audio. ¿Me lo escribes?", numero_usuario)
                     return make_response("OK", 200)
 
-            # --- LÓGICA DE ESTADOS ---
             if user["estado"] == "ELIGE_PLAN":
                 user["plan"] = mensaje_para_ia
                 user["estado"] = "ENCUESTA"
@@ -136,7 +131,6 @@ def recibir_mensajes():
                 enviar_mensaje_whatsapp("¡Registro completado! ✅ Ya puedes reportar ventas por texto o voz.", numero_usuario)
 
             else:
-                # MODO ASESOR ACTIVO
                 user["historial"].append(f"Usuario: {mensaje_para_ia}")
                 historial_reciente = "\n".join(user["historial"][-6:])
                 
