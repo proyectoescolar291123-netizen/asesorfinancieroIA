@@ -7,18 +7,16 @@ app = Flask(__name__)
 
 # --- 1. CONFIGURACIÓN ---
 TOKEN_VERIFICACION = "estudiante_ia_2026"
-# Tu nuevo token actualizado
 ACCESS_TOKEN = os.environ.get("WHATSAPP_TOKEN")
 PHONE_ID = "993609860504120"
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 
-# Inicializamos el cliente de Gemini 3
 client = genai.Client(api_key=GEMINI_KEY)
 
 # --- 2. MEMORIA GLOBAL ---
-# Aquí guardamos perfil, ventas e historial por número de teléfono
 usuarios_memoria = {}
 
+# --- 3. FUNCIONES DE APOYO ---
 def enviar_mensaje_whatsapp(texto, numero):
     numero_limpio = str(numero).replace("+", "")
     url = f"https://graph.facebook.com/v18.0/{PHONE_ID}/messages"
@@ -30,12 +28,32 @@ def enviar_mensaje_whatsapp(texto, numero):
         "text": {"body": texto}
     }
     r = requests.post(url, headers=headers, json=data)
-    print(f"DEBUG WHATSAPP: Status {r.status_code}")
+    print(f"DEBUG WHATSAPP: Envío de mensaje Status {r.status_code}")
     return r.status_code
+
+def descargar_audio(media_id):
+    """Descarga el audio de los servidores de Meta usando su ID"""
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+    
+    # Paso A: Obtener la URL de descarga
+    url_media = f"https://graph.facebook.com/v18.0/{media_id}"
+    res = requests.get(url_media, headers=headers)
+    file_url = res.json().get("url")
+    
+    if not file_url:
+        return None
+
+    # Paso B: Descargar el archivo binario (.ogg)
+    archivo_binario = requests.get(file_url, headers=headers)
+    path_local = f"{media_id}.ogg"
+    with open(path_local, "wb") as f:
+        f.write(archivo_binario.content)
+    
+    return path_local
 
 @app.route("/")
 def index():
-    return "Asesor Financiero EBC - Cerebro con Memoria Activo", 200
+    return "Asesor Financiero EBC - Versión Voz y Memoria Activa", 200
 
 @app.route('/webhook', methods=['GET'])
 def verificar_webhook():
@@ -49,11 +67,13 @@ def verificar_webhook():
 def recibir_mensajes():
     datos = request.get_json()
     try:
-        if 'messages' in datos['entry'][0]['changes'][0]['value']:
-            mensaje_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['text']['body']
-            numero_usuario = datos['entry'][0]['changes'][0]['value']['messages'][0]['from']
+        value = datos['entry'][0]['changes'][0]['value']
+        if 'messages' in value:
+            msg = value['messages'][0]
+            numero_usuario = msg['from']
+            tipo_mensaje = msg['type']
 
-            # --- INICIALIZACIÓN DE USUARIO NUEVO ---
+            # Inicialización de usuario
             if numero_usuario not in usuarios_memoria:
                 usuarios_memoria[numero_usuario] = {
                     "estado": "ELIGE_PLAN",
@@ -62,76 +82,86 @@ def recibir_mensajes():
                     "ventas_hoy": 0.0,
                     "historial": []
                 }
-                bienvenida = (
-                    "¡Hola! Soy tu Asistente Financiero 📊. Te ayudo a controlar el dinero de tu negocio.\n\n"
-                    "¿Qué plan prefieres?\n"
-                    "🔹 *PLAN NORMAL*\n"
-                    "👑 *PLAN PREMIUM*\n\n"
-                    "¿Con cuál te gustaría iniciar hoy?"
-                )
+                bienvenida = "¡Hola! Soy tu Asistente Financiero 📊. ¿Qué plan prefieres: *PLAN NORMAL* o *KING PREMIUM*?"
                 enviar_mensaje_whatsapp(bienvenida, numero_usuario)
                 return make_response("OK", 200)
 
             user = usuarios_memoria[numero_usuario]
+            mensaje_para_ia = ""
 
-            # --- PASO 1: ELECCIÓN DE PLAN ---
-            if user["estado"] == "ELIGE_PLAN":
-                user["plan"] = mensaje_usuario
-                user["estado"] = "ENCUESTA"
-                encuesta = (
-                    "¡Excelente! 🚀 Ahora, responde estas preguntas de registro para conocer tu negocio:\n\n"
-                    "1️⃣ Giro 2️⃣ Colonia 3️⃣ ¿Nuevo o con tiempo? 4️⃣ Renta 5️⃣ Insumos/semana 6️⃣ Impuestos 7️⃣ Nómina/quincena "
-                    "8️⃣ Empleados 9️⃣ Ticket promedio 🔟 Gastos fijos (luz/agua) 1️⃣1️⃣ Meta de ahorro"
-                )
-                enviar_mensaje_whatsapp(encuesta, numero_usuario)
-
-            # --- PASO 2: REGISTRO DE PERFIL ---
-            elif user["estado"] == "ENCUESTA":
-                user["perfil"] = mensaje_usuario
-                user["estado"] = "ACTIVO"
-                enviar_mensaje_whatsapp("¡Registro completado! ✅ Ahora soy tu socio financiero. Reporta tus ventas o hazme cualquier consulta.", numero_usuario)
-
-            # --- PASO 3: MODO ASESOR ACTIVO (CEREBRO) ---
-            else:
-                # Agregamos el mensaje actual al historial
-                user["historial"].append(f"Usuario: {mensaje_usuario}")
+            # --- PROCESAMIENTO SEGÚN TIPO DE ENTRADA ---
+            if tipo_mensaje == "text":
+                mensaje_para_ia = msg['text']['body']
+            
+            elif tipo_mensaje == "audio":
+                media_id = msg['audio']['id']
+                path_audio = descargar_audio(media_id)
                 
-                # Preparamos el contexto para Gemini (historial + perfil + ventas)
-                historial_reciente = "\n".join(user["historial"][-6:]) # Recordar últimos 6 mensajes
+                if path_audio:
+                    # Le pedimos a Gemini que escuche el archivo
+                    with open(path_audio, "rb") as f:
+                        audio_bytes = f.read()
+                    
+                    # Usamos Gemini para transcribir/entender el audio
+                    try:
+                        response_audio = client.models.generate_content(
+                            model="gemini-3-flash-preview",
+                            contents=[
+                                "Transcribe exactamente lo que dice este audio de un dueño de negocio:",
+                                {"mime_type": "audio/ogg", "data": audio_bytes}
+                            ]
+                        )
+                        mensaje_para_ia = response_audio.text
+                        print(f"IA ESCUCHÓ: {mensaje_para_ia}")
+                    except Exception as e:
+                        print(f"Error procesando audio: {e}")
+                        mensaje_para_ia = "[Error al escuchar el audio]"
+                    
+                    # Limpiamos el archivo del servidor
+                    if os.path.exists(path_audio):
+                        os.remove(path_audio)
+                else:
+                    enviar_mensaje_whatsapp("Lo siento, no pude descargar tu audio. ¿Me lo escribes?", numero_usuario)
+                    return make_response("OK", 200)
+
+            # --- LÓGICA DE ESTADOS ---
+            if user["estado"] == "ELIGE_PLAN":
+                user["plan"] = mensaje_para_ia
+                user["estado"] = "ENCUESTA"
+                enviar_mensaje_whatsapp("¡Excelente! 🚀 Ahora, descríbeme tu negocio (Giro, renta, gastos, meta).", numero_usuario)
+            
+            elif user["estado"] == "ENCUESTA":
+                user["perfil"] = mensaje_para_ia
+                user["estado"] = "ACTIVO"
+                enviar_mensaje_whatsapp("¡Registro completado! ✅ Ya puedes reportar ventas por texto o voz.", numero_usuario)
+
+            else:
+                # MODO ASESOR ACTIVO
+                user["historial"].append(f"Usuario: {mensaje_para_ia}")
+                historial_reciente = "\n".join(user["historial"][-6:])
+                
                 prompt_sistema = (
-                    f"Actúa como un Asesor Financiero experto. Perfil del negocio: {user['perfil']}. "
-                    f"Plan contratado: {user['plan']}. Ventas del día: ${user['ventas_hoy']}.\n"
-                    f"Historial de conversación:\n{historial_reciente}\n\n"
-                    "INSTRUCCIÓN: Si el usuario reporta una venta, al final de tu respuesta pon EXACTAMENTE el formato: [SUMAR: monto]. "
-                    "Responde de forma ejecutiva y ayuda al usuario con sus finanzas."
+                    f"Eres un Asesor Financiero Pro. Perfil: {user['perfil']}. "
+                    f"Ventas hoy: ${user['ventas_hoy']}. Historial:\n{historial_reciente}\n"
+                    "INSTRUCCIÓN: Si detectas una venta, pon al final: [SUMAR: monto]."
                 )
 
-                try:
-                    response = client.models.generate_content(
-                        model="gemini-3-flash-preview",
-                        contents=prompt_sistema
-                    )
-                    respuesta_ia = response.text
+                response = client.models.generate_content(
+                    model="gemini-3-flash-preview",
+                    contents=prompt_sistema
+                )
+                respuesta_ia = response.text
 
-                    # Lógica de Suma Automática si la IA detectó dinero
-                    if "[SUMAR:" in respuesta_ia:
-                        try:
-                            monto_str = respuesta_ia.split("[SUMAR:")[1].split("]")[0].strip()
-                            monto = float(monto_str)
-                            user["ventas_hoy"] += monto
-                            # Limpiamos el código para que el usuario no lo vea
-                            respuesta_ia = respuesta_ia.split("[SUMAR:")[0].strip()
-                            respuesta_ia += f"\n\n💰 *Total ventas del día: ${user['ventas_hoy']:.2f}*"
-                        except:
-                            pass
+                if "[SUMAR:" in respuesta_ia:
+                    try:
+                        monto = float(respuesta_ia.split("[SUMAR:")[1].split("]")[0].strip())
+                        user["ventas_hoy"] += monto
+                        respuesta_ia = respuesta_ia.split("[SUMAR:")[0].strip()
+                        respuesta_ia += f"\n\n💰 *Saldo del día: ${user['ventas_hoy']:.2f}*"
+                    except: pass
 
-                    # Guardamos la respuesta de la IA en el historial
-                    user["historial"].append(f"Asesor: {respuesta_ia}")
-                    enviar_mensaje_whatsapp(respuesta_ia, numero_usuario)
-
-                except Exception as e:
-                    print(f"Error Gemini: {e}")
-                    enviar_mensaje_whatsapp("Lo siento, tuve un problema al procesar eso. ¿Me lo repites?", numero_usuario)
+                user["historial"].append(f"Asesor: {respuesta_ia}")
+                enviar_mensaje_whatsapp(respuesta_ia, numero_usuario)
 
     except Exception as e:
         print(f"Error General: {e}")
