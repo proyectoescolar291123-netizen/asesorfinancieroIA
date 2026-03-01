@@ -100,9 +100,9 @@ def recibir_mensajes():
                         audio_bytes = f.read()
                     
                     try:
-                        # --- CORRECCIÓN DE FORMATO MULTIMODAL ---
+                        # --- CAMBIADO A GEMINI 1.5 FLASH (MÁS CUOTA) ---
                         response_audio = client.models.generate_content(
-                            model="gemini-3-flash-preview",
+                            model="gemini-1.5-flash",
                             contents=[
                                 types.Part.from_text(text="Transcribe exactamente lo que dice este audio de un dueño de negocio:"),
                                 types.Part.from_bytes(data=audio_bytes, mime_type="audio/ogg")
@@ -140,8 +140,9 @@ def recibir_mensajes():
                     "INSTRUCCIÓN: Si detectas una venta, pon al final: [SUMAR: monto]."
                 )
 
+                # --- CAMBIADO A GEMINI 1.5 FLASH (ESTABILIDAD TOTAL) ---
                 response = client.models.generate_content(
-                    model="gemini-3-flash-preview",
+                    model="gemini-1.5-flash",
                     contents=prompt_sistema
                 )
                 respuesta_ia = response.text
