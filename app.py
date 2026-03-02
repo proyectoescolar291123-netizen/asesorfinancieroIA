@@ -15,7 +15,6 @@ GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 client = genai.Client(api_key=GEMINI_KEY)
 MODELOS_A_PROBAR = ["gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-3-flash-preview"]
 
-# --- 2. MEMORIA GLOBAL ---
 usuarios_memoria = {}
 
 def enviar_mensaje_whatsapp(texto, numero):
@@ -46,7 +45,7 @@ def descargar_audio(media_id):
     return path
 
 @app.route("/")
-def index(): return "Asesor Financiero v6.5 - Control de Caja Activo", 200
+def index(): return "Asesor Financiero v6.6 - Reporte Limpio", 200
 
 @app.route('/webhook', methods=['GET'])
 def verificar_webhook():
@@ -66,18 +65,13 @@ def recibir_mensajes():
 
             if numero_usuario not in usuarios_memoria:
                 usuarios_memoria[numero_usuario] = {
-                    "estado": "PLAN", 
-                    "plan": "", 
-                    "perfil": "", 
-                    "efectivo": 0.0, 
-                    "tarjeta": 0.0, 
-                    "historial": []
+                    "estado": "PLAN", "plan": "", "perfil": "", 
+                    "efectivo": 0.0, "tarjeta": 0.0, "historial": []
                 }
                 bienvenida = (
                     "¡Hola! Soy tu Asistente Financiero 📊.\n\n"
-                    "Elige un plan:\n🔹 *PLAN NORMAL* (Control de caja y ventas)\n"
-                    "👑 *KING PREMIUM* (Análisis y Sheets)\n\n"
-                    "*(Ambos planes separan efectivo de tarjeta)*"
+                    "Elige un plan:\n🔹 *PLAN NORMAL*\n👑 *KING PREMIUM*\n\n"
+                    "¿Con cuál iniciamos hoy?"
                 )
                 enviar_mensaje_whatsapp(bienvenida, numero_usuario)
                 return make_response("OK", 200)
@@ -92,7 +86,7 @@ def recibir_mensajes():
                 if path:
                     with open(path, "rb") as f:
                         input_ia = llamar_gemini([types.Part.from_bytes(data=f.read(), mime_type="audio/ogg"),
-                                                 types.Part.from_text(text="Transcribe este audio de negocio.")])
+                                                 types.Part.from_text(text="Transcribe este audio.")] )
                     os.remove(path)
 
             if user["estado"] == "PLAN":
@@ -104,26 +98,27 @@ def recibir_mensajes():
             elif user["estado"] == "ENCUESTA":
                 user["perfil"] = input_ia
                 user["estado"] = "ACTIVO"
-                enviar_mensaje_whatsapp("¡Registro completado! ✅ Ya puedes decirme: 'Vendí 200 en efectivo' o '500 con tarjeta'.", numero_usuario)
+                enviar_mensaje_whatsapp("¡Registro completado! ✅ Reporta ventas en efectivo o tarjeta.", numero_usuario)
 
             else:
                 user["historial"].append(f"Usuario: {input_ia}")
                 
+                # PROMPT MÁS ESTRICTO PARA EVITAR REPETICIÓN
                 prompt = (
-                    f"Eres un Asesor Financiero Pro de la EBC. Perfil: {user['perfil']}. "
-                    f"Saldo hoy - Efectivo: ${user['efectivo']}, Tarjeta: ${user['tarjeta']}. "
-                    f"Plan: {user['plan']}. Historial: {user['historial'][-5:]}. "
+                    f"Eres un Asesor Financiero Pro de la EBC. Perfil: {user['perfil']}. Plan: {user['plan']}. "
+                    f"Saldo hoy: Efectivo ${user['efectivo']}, Tarjeta ${user['tarjeta']}. "
+                    f"Historial: {user['historial'][-5:]}. "
                     "\nINSTRUCCIONES:\n"
-                    "1. Si el usuario reporta una venta, identifica si es efectivo o tarjeta.\n"
-                    "2. Al final de tu respuesta usa EXACTAMENTE: [EFECTIVO: monto] o [TARJETA: monto].\n"
-                    "3. Si no especifica el método, pregúntale educadamente.\n"
-                    "4. Si pide su estado de ventas, dale el desglose de ambos saldos y el total."
+                    "1. NO escribas el desglose de saldos ni totales en tu respuesta, yo lo haré después.\n"
+                    "2. Solo da una respuesta corta, un consejo o una felicitación.\n"
+                    "3. Identifica si la venta es efectivo o tarjeta y pon al final EXACTAMENTE: [EFECTIVO: monto] o [TARJETA: monto].\n"
+                    "4. Si el plan es PREMIUM, añade un consejo breve de inversión."
                 )
                 
                 res_ia = llamar_gemini(prompt)
 
                 if res_ia:
-                    # Lógica de suma para Efectivo
+                    # Procesar etiquetas de suma
                     if "[EFECTIVO:" in res_ia:
                         try:
                             m = float(res_ia.split("[EFECTIVO:")[1].split("]")[0].strip())
@@ -131,7 +126,6 @@ def recibir_mensajes():
                             res_ia = res_ia.split("[EFECTIVO:")[0].strip()
                         except: pass
                     
-                    # Lógica de suma para Tarjeta
                     if "[TARJETA:" in res_ia:
                         try:
                             m = float(res_ia.split("[TARJETA:")[1].split("]")[0].strip())
@@ -139,11 +133,18 @@ def recibir_mensajes():
                             res_ia = res_ia.split("[TARJETA:")[0].strip()
                         except: pass
                     
+                    # REPORTE LIMPIO AL FINAL
                     total = user["efectivo"] + user["tarjeta"]
-                    res_ia += f"\n\n💵 *Efectivo:* ${user['efectivo']:.2f}\n💳 *Tarjeta:* ${user['tarjeta']:.2f}\n💰 *Total:* ${total:.2f}"
+                    reporte = (
+                        f"\n\n--- 📊 *REPORTE ACTUAL* ---\n"
+                        f"💵 *Efectivo:* ${user['efectivo']:.2f}\n"
+                        f"💳 *Tarjeta:* ${user['tarjeta']:.2f}\n"
+                        f"💰 *Total:* ${total:.2f}"
+                    )
                     
-                    user["historial"].append(f"IA: {res_ia}")
-                    enviar_mensaje_whatsapp(res_ia, numero_usuario)
+                    respuesta_final = res_ia + reporte
+                    user["historial"].append(f"IA: {respuesta_final}")
+                    enviar_mensaje_whatsapp(respuesta_final, numero_usuario)
 
     except Exception as e: print(f"Error: {e}")
     return make_response("OK", 200)
