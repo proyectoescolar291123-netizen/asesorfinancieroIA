@@ -1,5 +1,6 @@
 import os
 import requests
+import threading
 from flask import Flask, request, make_response
 from google import genai
 from google.genai import types 
@@ -17,6 +18,7 @@ MODELOS_A_PROBAR = ["gemini-1.5-flash-latest", "gemini-1.5-flash", "gemini-3-fla
 
 usuarios_memoria = {}
 
+# --- 2. FUNCIONES DE APOYO ---
 def enviar_mensaje_whatsapp(texto, numero):
     numero_limpio = str(numero).replace("+", "")
     url = f"https://graph.facebook.com/v18.0/{PHONE_ID}/messages"
@@ -44,8 +46,97 @@ def descargar_audio(media_id):
     with open(path, "wb") as f: f.write(archivo.content)
     return path
 
+# --- 3. LÓGICA PRINCIPAL (HILO SEPARADO) ---
+def procesar_y_responder(numero_usuario, tipo, msg):
+    try:
+        if numero_usuario not in usuarios_memoria:
+            usuarios_memoria[numero_usuario] = {
+                "estado": "PLAN", "plan": "", "perfil": "", 
+                "efectivo": 0.0, "tarjeta": 0.0, "historial": []
+            }
+            bienvenida = (
+                "¡Hola! 👋 Soy tu Asistente Financiero. Te ayudo a llevar el control de tu negocio de forma sencilla.\n\n"
+                "Dime, ¿con qué plan empezamos?\n🔹 *PLAN NORMAL*\n👑 *KING PREMIUM*"
+            )
+            enviar_mensaje_whatsapp(bienvenida, numero_usuario)
+            return
+
+        user = usuarios_memoria[numero_usuario]
+        input_ia = ""
+
+        if tipo == "text":
+            input_ia = msg['text']['body']
+        elif tipo == "audio":
+            path = descargar_audio(msg['audio']['id'])
+            if path:
+                with open(path, "rb") as f:
+                    input_ia = llamar_gemini([types.Part.from_bytes(data=f.read(), mime_type="audio/ogg"),
+                                             types.Part.from_text(text="Transcribe este audio.")] )
+                os.remove(path)
+
+        if user["estado"] == "PLAN":
+            user["plan"] = input_ia.upper()
+            user["estado"] = "ENCUESTA"
+            encuesta = "¡Excelente! 🚀 Para darte mejores consejos, cuéntame un poco de tu negocio:\n\n1️⃣ Giro 2️⃣ Colonia 3️⃣ ¿Nuevo? 4️⃣ Renta 🏠 5️⃣ Insumos 📦 6️⃣ Impuestos 7️⃣ Sueldos 8️⃣ Empleados 9️⃣ Ticket promedio 🔟 Gastos fijos 1️⃣1️⃣ Meta ahorro"
+            enviar_mensaje_whatsapp(encuesta, numero_usuario)
+        
+        elif user["estado"] == "ENCUESTA":
+            user["perfil"] = input_ia
+            user["estado"] = "ACTIVO"
+            enviar_mensaje_whatsapp("¡Listo! ✅ Registro completo. Ahora puedes reportar tus ventas por aquí.", numero_usuario)
+
+        else:
+            user["historial"].append(f"Usuario: {input_ia}")
+            prompt = (
+                f"Eres un Asesor Financiero experto y amable. Perfil: {user['perfil']}. Plan: {user['plan']}. "
+                f"Saldo actual: Efectivo ${user['efectivo']}, Tarjeta ${user['tarjeta']}. "
+                f"Historial: {user['historial'][-5:]}. "
+                "\nINSTRUCCIONES:\n"
+                "1. Usa lenguaje natural, claro y profesional. Evita tecnicismos complejos.\n"
+                "2. Si el usuario reporta ventas mixtas (efectivo y tarjeta), sepáralas.\n"
+                "3. Al final de tu mensaje usa SIEMPRE el formato: [EFECTIVO: monto] y/o [TARJETA: monto].\n"
+                "4. NO escribas el desglose de saldos totales en tu texto.\n"
+                "5. Si el plan es PREMIUM, da un breve consejo sobre rentabilidad."
+            )
+            
+            res_ia = llamar_gemini(prompt)
+
+            if res_ia:
+                if "[EFECTIVO:" in res_ia:
+                    try:
+                        partes = res_ia.split("[EFECTIVO:")
+                        for p in partes[1:]:
+                            monto = float(p.split("]")[0].strip())
+                            user["efectivo"] += monto
+                        res_ia = res_ia.split("[EFECTIVO:")[0].strip()
+                    except: pass
+                
+                if "[TARJETA:" in res_ia:
+                    try:
+                        partes = res_ia.split("[TARJETA:")
+                        for p in partes[1:]:
+                            monto = float(p.split("]")[0].strip())
+                            user["tarjeta"] += monto
+                        res_ia = res_ia.split("[TARJETA:")[0].strip()
+                    except: pass
+                
+                total = user["efectivo"] + user["tarjeta"]
+                reporte = (
+                    f"\n\n--- 📊 *REPORTE ACTUAL* ---\n"
+                    f"💵 *Efectivo:* ${user['efectivo']:.2f}\n"
+                    f"💳 *Tarjeta:* ${user['tarjeta']:.2f}\n"
+                    f"💰 *Total:* ${total:.2f}"
+                )
+                
+                respuesta_final = res_ia + reporte
+                user["historial"].append(f"IA: {respuesta_final}")
+                enviar_mensaje_whatsapp(respuesta_final, numero_usuario)
+    except Exception as e:
+        print(f"Error en hilo: {e}")
+
+# --- 4. RUTAS ---
 @app.route("/")
-def index(): return "Asesor Financiero v6.8 - Lenguaje Natural Activo", 200
+def index(): return "Asesor Financiero v6.9 - Anti-Timeout Activo", 200
 
 @app.route('/webhook', methods=['GET'])
 def verificar_webhook():
@@ -63,95 +154,13 @@ def recibir_mensajes():
             numero_usuario = msg['from']
             tipo = msg['type']
 
-            if numero_usuario not in usuarios_memoria:
-                usuarios_memoria[numero_usuario] = {
-                    "estado": "PLAN", "plan": "", "perfil": "", 
-                    "efectivo": 0.0, "tarjeta": 0.0, "historial": []
-                }
-                bienvenida = (
-                    "¡Hola! 👋 Soy tu Asistente Financiero. Te ayudo a llevar el control de tu negocio de forma sencilla.\n\n"
-                    "Dime, ¿con qué plan empezamos?\n🔹 *PLAN NORMAL*\n👑 *KING PREMIUM*"
-                )
-                enviar_mensaje_whatsapp(bienvenida, numero_usuario)
-                return make_response("OK", 200)
+            # LANZAMOS EL PROCESAMIENTO EN UN HILO SEPARADO
+            thread = threading.Thread(target=procesar_y_responder, args=(numero_usuario, tipo, msg))
+            thread.start()
 
-            user = usuarios_memoria[numero_usuario]
-            input_ia = ""
-
-            if tipo == "text":
-                input_ia = msg['text']['body']
-            elif tipo == "audio":
-                path = descargar_audio(msg['audio']['id'])
-                if path:
-                    with open(path, "rb") as f:
-                        input_ia = llamar_gemini([types.Part.from_bytes(data=f.read(), mime_type="audio/ogg"),
-                                                 types.Part.from_text(text="Transcribe este audio.")] )
-                    os.remove(path)
-
-            if user["estado"] == "PLAN":
-                user["plan"] = input_ia.upper()
-                user["estado"] = "ENCUESTA"
-                encuesta = "¡Excelente! 🚀 Para darte mejores consejos, cuéntame un poco de tu negocio:\n\n1️⃣ Giro 2️⃣ Colonia 3️⃣ ¿Nuevo? 4️⃣ Renta 🏠 5️⃣ Insumos 📦 6️⃣ Impuestos 7️⃣ Sueldos 8️⃣ Empleados 9️⃣ Ticket promedio 🔟 Gastos fijos 1️⃣1️⃣ Meta ahorro"
-                enviar_mensaje_whatsapp(encuesta, numero_usuario)
-            
-            elif user["estado"] == "ENCUESTA":
-                user["perfil"] = input_ia
-                user["estado"] = "ACTIVO"
-                enviar_mensaje_whatsapp("¡Listo! ✅ Registro completo. Ahora puedes reportar tus ventas por aquí.", numero_usuario)
-
-            else:
-                user["historial"].append(f"Usuario: {input_ia}")
-                
-                # --- PROMPT MEJORADO: LENGUAJE NATURAL Y SUMA ESTRICTA ---
-                prompt = (
-                    f"Eres un Asesor Financiero experto y amable. Perfil: {user['perfil']}. Plan: {user['plan']}. "
-                    f"Saldo actual: Efectivo ${user['efectivo']}, Tarjeta ${user['tarjeta']}. "
-                    f"Historial: {user['historial'][-5:]}. "
-                    "\nINSTRUCCIONES:\n"
-                    "1. Usa lenguaje natural, claro y profesional. Evita tecnicismos complejos y también evita ser demasiado informal o 'barrio'.\n"
-                    "2. Si el usuario reporta ventas mixtas (efectivo y tarjeta), sepáralas.\n"
-                    "3. Al final de tu mensaje usa SIEMPRE el formato: [EFECTIVO: monto] y/o [TARJETA: monto] para cada cantidad mencionada.\n"
-                    "4. NO escribas el desglose de saldos totales en tu texto, solo confirma la acción.\n"
-                    "5. Si el plan es PREMIUM, da un breve consejo sobre cómo mejorar la rentabilidad."
-                )
-                
-                res_ia = llamar_gemini(prompt)
-
-                if res_ia:
-                    # PROCESAR EFECTIVO
-                    if "[EFECTIVO:" in res_ia:
-                        try:
-                            # Puede haber varios montos, sumamos todos
-                            partes = res_ia.split("[EFECTIVO:")
-                            for p in partes[1:]:
-                                monto = float(p.split("]")[0].strip())
-                                user["efectivo"] += monto
-                            res_ia = res_ia.split("[EFECTIVO:")[0].strip()
-                        except: pass
-                    
-                    # PROCESAR TARJETA
-                    if "[TARJETA:" in res_ia:
-                        try:
-                            partes = res_ia.split("[TARJETA:")
-                            for p in partes[1:]:
-                                monto = float(p.split("]")[0].strip())
-                                user["tarjeta"] += monto
-                            res_ia = res_ia.split("[TARJETA:")[0].strip()
-                        except: pass
-                    
-                    total = user["efectivo"] + user["tarjeta"]
-                    reporte = (
-                        f"\n\n--- 📊 *REPORTE ACTUAL* ---\n"
-                        f"💵 *Efectivo:* ${user['efectivo']:.2f}\n"
-                        f"💳 *Tarjeta:* ${user['tarjeta']:.2f}\n"
-                        f"💰 *Total:* ${total:.2f}"
-                    )
-                    
-                    respuesta_final = res_ia + reporte
-                    user["historial"].append(f"IA: {respuesta_final}")
-                    enviar_mensaje_whatsapp(respuesta_final, numero_usuario)
-
-    except Exception as e: print(f"Error: {e}")
+    except Exception as e: print(f"Error Webhook: {e}")
+    
+    # RESPONDEMOS 200 OK DE INMEDIATO A WHATSAPP
     return make_response("OK", 200)
 
 if __name__ == '__main__':
