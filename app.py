@@ -45,7 +45,7 @@ def descargar_audio(media_id):
     return path
 
 @app.route("/")
-def index(): return "Asesor Financiero v6.7 - Lenguaje Amigable", 200
+def index(): return "Asesor Financiero v6.8 - Lenguaje Natural Activo", 200
 
 @app.route('/webhook', methods=['GET'])
 def verificar_webhook():
@@ -69,9 +69,8 @@ def recibir_mensajes():
                     "efectivo": 0.0, "tarjeta": 0.0, "historial": []
                 }
                 bienvenida = (
-                    "¡Qué onda! 👋 Soy tu Asistente Financiero. Te ayudo a llevar las cuentas de tu negocio sin complicaciones.\n\n"
-                    "Dime, ¿qué plan te late?\n🔹 *PLAN NORMAL*\n👑 *KING PREMIUM*\n\n"
-                    "¿Con cuál empezamos?"
+                    "¡Hola! 👋 Soy tu Asistente Financiero. Te ayudo a llevar el control de tu negocio de forma sencilla.\n\n"
+                    "Dime, ¿con qué plan empezamos?\n🔹 *PLAN NORMAL*\n👑 *KING PREMIUM*"
                 )
                 enviar_mensaje_whatsapp(bienvenida, numero_usuario)
                 return make_response("OK", 200)
@@ -92,44 +91,51 @@ def recibir_mensajes():
             if user["estado"] == "PLAN":
                 user["plan"] = input_ia.upper()
                 user["estado"] = "ENCUESTA"
-                encuesta = "¡Súper! 🚀 Oye, para ayudarte mejor con tus números, cuéntame:\n\n1️⃣ ¿De qué es tu negocio?\n2️⃣ ¿En qué colonia estás?\n3️⃣ ¿Apenas vas arrancando o ya llevas tiempo?\n4️⃣ ¿Cuánto pagas de renta? 🏠\n5️⃣ ¿Cuánto gastas a la semana en mercancía? 📦\n6️⃣ ¿Y de impuestos al mes?\n7️⃣ ¿Cuánto pagas de sueldos a la quincena? 👥\n8️⃣ ¿Cuántos empleados tienes?\n9️⃣ ¿Más o menos cuánto te compra cada cliente?\n🔟 ¿Gastos de luz, agua o internet? 💡\n1️⃣1️⃣ ¿Cuánto te gustaría ahorrar al mes?"
+                encuesta = "¡Excelente! 🚀 Para darte mejores consejos, cuéntame un poco de tu negocio:\n\n1️⃣ Giro 2️⃣ Colonia 3️⃣ ¿Nuevo? 4️⃣ Renta 🏠 5️⃣ Insumos 📦 6️⃣ Impuestos 7️⃣ Sueldos 8️⃣ Empleados 9️⃣ Ticket promedio 🔟 Gastos fijos 1️⃣1️⃣ Meta ahorro"
                 enviar_mensaje_whatsapp(encuesta, numero_usuario)
             
             elif user["estado"] == "ENCUESTA":
                 user["perfil"] = input_ia
                 user["estado"] = "ACTIVO"
-                enviar_mensaje_whatsapp("¡Listo! ✅ Ya quedó tu registro. Avísame cuando vendas algo en efectivo o con tarjeta y yo llevo la cuenta por ti.", numero_usuario)
+                enviar_mensaje_whatsapp("¡Listo! ✅ Registro completo. Ahora puedes reportar tus ventas por aquí.", numero_usuario)
 
             else:
                 user["historial"].append(f"Usuario: {input_ia}")
                 
-                # PROMPT CON LENGUAJE RELAJADO
+                # --- PROMPT MEJORADO: LENGUAJE NATURAL Y SUMA ESTRICTA ---
                 prompt = (
-                    f"Eres un asesor financiero buena onda pero muy listo con los números. Perfil: {user['perfil']}. Plan: {user['plan']}. "
-                    f"Saldos: Efectivo ${user['efectivo']}, Tarjeta ${user['tarjeta']}. "
+                    f"Eres un Asesor Financiero experto y amable. Perfil: {user['perfil']}. Plan: {user['plan']}. "
+                    f"Saldo actual: Efectivo ${user['efectivo']}, Tarjeta ${user['tarjeta']}. "
                     f"Historial: {user['historial'][-5:]}. "
                     "\nINSTRUCCIONES:\n"
-                    "1. Habla de forma sencilla, clara y amigable. Cero tecnicismos aburridos.\n"
-                    "2. NO escribas el desglose de saldos, yo lo pondré al final.\n"
-                    "3. Si el usuario vende algo, felicítalo como un compa: '¡Eso es todo!', '¡Venga!', '¡A darle!'.\n"
-                    "4. Pon al final EXACTAMENTE: [EFECTIVO: monto] o [TARJETA: monto].\n"
-                    "5. Si es PREMIUM, dale un consejo de negocio que sea fácil de entender y aplicar."
+                    "1. Usa lenguaje natural, claro y profesional. Evita tecnicismos complejos y también evita ser demasiado informal o 'barrio'.\n"
+                    "2. Si el usuario reporta ventas mixtas (efectivo y tarjeta), sepáralas.\n"
+                    "3. Al final de tu mensaje usa SIEMPRE el formato: [EFECTIVO: monto] y/o [TARJETA: monto] para cada cantidad mencionada.\n"
+                    "4. NO escribas el desglose de saldos totales en tu texto, solo confirma la acción.\n"
+                    "5. Si el plan es PREMIUM, da un breve consejo sobre cómo mejorar la rentabilidad."
                 )
                 
                 res_ia = llamar_gemini(prompt)
 
                 if res_ia:
+                    # PROCESAR EFECTIVO
                     if "[EFECTIVO:" in res_ia:
                         try:
-                            m = float(res_ia.split("[EFECTIVO:")[1].split("]")[0].strip())
-                            user["efectivo"] += m
+                            # Puede haber varios montos, sumamos todos
+                            partes = res_ia.split("[EFECTIVO:")
+                            for p in partes[1:]:
+                                monto = float(p.split("]")[0].strip())
+                                user["efectivo"] += monto
                             res_ia = res_ia.split("[EFECTIVO:")[0].strip()
                         except: pass
                     
+                    # PROCESAR TARJETA
                     if "[TARJETA:" in res_ia:
                         try:
-                            m = float(res_ia.split("[TARJETA:")[1].split("]")[0].strip())
-                            user["tarjeta"] += m
+                            partes = res_ia.split("[TARJETA:")
+                            for p in partes[1:]:
+                                monto = float(p.split("]")[0].strip())
+                                user["tarjeta"] += monto
                             res_ia = res_ia.split("[TARJETA:")[0].strip()
                         except: pass
                     
