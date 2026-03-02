@@ -45,7 +45,7 @@ def descargar_audio(media_id):
     return path
 
 @app.route("/")
-def index(): return "Asesor Financiero v6.6 - Reporte Limpio", 200
+def index(): return "Asesor Financiero v6.7 - Lenguaje Amigable", 200
 
 @app.route('/webhook', methods=['GET'])
 def verificar_webhook():
@@ -69,9 +69,9 @@ def recibir_mensajes():
                     "efectivo": 0.0, "tarjeta": 0.0, "historial": []
                 }
                 bienvenida = (
-                    "¡Hola! Soy tu Asistente Financiero 📊.\n\n"
-                    "Elige un plan:\n🔹 *PLAN NORMAL*\n👑 *KING PREMIUM*\n\n"
-                    "¿Con cuál iniciamos hoy?"
+                    "¡Qué onda! 👋 Soy tu Asistente Financiero. Te ayudo a llevar las cuentas de tu negocio sin complicaciones.\n\n"
+                    "Dime, ¿qué plan te late?\n🔹 *PLAN NORMAL*\n👑 *KING PREMIUM*\n\n"
+                    "¿Con cuál empezamos?"
                 )
                 enviar_mensaje_whatsapp(bienvenida, numero_usuario)
                 return make_response("OK", 200)
@@ -92,33 +92,33 @@ def recibir_mensajes():
             if user["estado"] == "PLAN":
                 user["plan"] = input_ia.upper()
                 user["estado"] = "ENCUESTA"
-                encuesta = "¡Excelente! 🚀 Responde estas preguntas:\n\n1️⃣ Giro\n2️⃣ Colonia\n3️⃣ ¿Nuevo?\n4️⃣ Renta 🏠\n5️⃣ Insumos 📦\n6️⃣ Impuestos 🏦\n7️⃣ Nómina 👥\n8️⃣ Empleados\n9️⃣ Ticket promedio\n🔟 Gastos fijos 💡\n1️⃣1️⃣ Meta ahorro"
+                encuesta = "¡Súper! 🚀 Oye, para ayudarte mejor con tus números, cuéntame:\n\n1️⃣ ¿De qué es tu negocio?\n2️⃣ ¿En qué colonia estás?\n3️⃣ ¿Apenas vas arrancando o ya llevas tiempo?\n4️⃣ ¿Cuánto pagas de renta? 🏠\n5️⃣ ¿Cuánto gastas a la semana en mercancía? 📦\n6️⃣ ¿Y de impuestos al mes?\n7️⃣ ¿Cuánto pagas de sueldos a la quincena? 👥\n8️⃣ ¿Cuántos empleados tienes?\n9️⃣ ¿Más o menos cuánto te compra cada cliente?\n🔟 ¿Gastos de luz, agua o internet? 💡\n1️⃣1️⃣ ¿Cuánto te gustaría ahorrar al mes?"
                 enviar_mensaje_whatsapp(encuesta, numero_usuario)
             
             elif user["estado"] == "ENCUESTA":
                 user["perfil"] = input_ia
                 user["estado"] = "ACTIVO"
-                enviar_mensaje_whatsapp("¡Registro completado! ✅ Reporta ventas en efectivo o tarjeta.", numero_usuario)
+                enviar_mensaje_whatsapp("¡Listo! ✅ Ya quedó tu registro. Avísame cuando vendas algo en efectivo o con tarjeta y yo llevo la cuenta por ti.", numero_usuario)
 
             else:
                 user["historial"].append(f"Usuario: {input_ia}")
                 
-                # PROMPT MÁS ESTRICTO PARA EVITAR REPETICIÓN
+                # PROMPT CON LENGUAJE RELAJADO
                 prompt = (
-                    f"Eres un Asesor Financiero Pro de la EBC. Perfil: {user['perfil']}. Plan: {user['plan']}. "
-                    f"Saldo hoy: Efectivo ${user['efectivo']}, Tarjeta ${user['tarjeta']}. "
+                    f"Eres un asesor financiero buena onda pero muy listo con los números. Perfil: {user['perfil']}. Plan: {user['plan']}. "
+                    f"Saldos: Efectivo ${user['efectivo']}, Tarjeta ${user['tarjeta']}. "
                     f"Historial: {user['historial'][-5:]}. "
                     "\nINSTRUCCIONES:\n"
-                    "1. NO escribas el desglose de saldos ni totales en tu respuesta, yo lo haré después.\n"
-                    "2. Solo da una respuesta corta, un consejo o una felicitación.\n"
-                    "3. Identifica si la venta es efectivo o tarjeta y pon al final EXACTAMENTE: [EFECTIVO: monto] o [TARJETA: monto].\n"
-                    "4. Si el plan es PREMIUM, añade un consejo breve de inversión."
+                    "1. Habla de forma sencilla, clara y amigable. Cero tecnicismos aburridos.\n"
+                    "2. NO escribas el desglose de saldos, yo lo pondré al final.\n"
+                    "3. Si el usuario vende algo, felicítalo como un compa: '¡Eso es todo!', '¡Venga!', '¡A darle!'.\n"
+                    "4. Pon al final EXACTAMENTE: [EFECTIVO: monto] o [TARJETA: monto].\n"
+                    "5. Si es PREMIUM, dale un consejo de negocio que sea fácil de entender y aplicar."
                 )
                 
                 res_ia = llamar_gemini(prompt)
 
                 if res_ia:
-                    # Procesar etiquetas de suma
                     if "[EFECTIVO:" in res_ia:
                         try:
                             m = float(res_ia.split("[EFECTIVO:")[1].split("]")[0].strip())
@@ -133,7 +133,6 @@ def recibir_mensajes():
                             res_ia = res_ia.split("[TARJETA:")[0].strip()
                         except: pass
                     
-                    # REPORTE LIMPIO AL FINAL
                     total = user["efectivo"] + user["tarjeta"]
                     reporte = (
                         f"\n\n--- 📊 *REPORTE ACTUAL* ---\n"
