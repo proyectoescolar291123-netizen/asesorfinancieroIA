@@ -178,4 +178,6 @@ def recibir_mensajes():
     return make_response("OK", 200)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+    # AJUSTE VITAL PARA RENDER: Usar el puerto de la variable de entorno
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
