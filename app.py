@@ -1,6 +1,7 @@
 import os
 import requests
 import threading
+import re
 from flask import Flask, request, make_response
 from google import genai
 from google.genai import types 
@@ -14,8 +15,7 @@ PHONE_ID = "993609860504120"
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 
 client = genai.Client(api_key=GEMINI_KEY)
-# Priorizamos Gemini 3 Flash por disponibilidad en México
-MODELOS_A_PROBAR = ["gemini-3-flash-preview", "gemini-1.5-flash-latest", "gemini-1.5-flash"]
+MODELOS_A_PROBAR = ["gemini-3-flash-preview", "gemini-1.5-flash-latest"]
 
 usuarios_memoria = {}
 
@@ -47,7 +47,7 @@ def descargar_audio(media_id):
     with open(path, "wb") as f: f.write(archivo.content)
     return path
 
-# --- 3. LÓGICA PRINCIPAL (HILO SEPARADO) ---
+# --- 3. LÓGICA PRINCIPAL ---
 def procesar_y_responder(numero_usuario, tipo, msg):
     try:
         if numero_usuario not in usuarios_memoria:
@@ -57,105 +57,89 @@ def procesar_y_responder(numero_usuario, tipo, msg):
                 "fechas_pago": ""
             }
             bienvenida = (
-                "¡Hola! 👋 Soy tu Asistente Financiero para la EBC.\n\n"
-                "Controla tus finanzas por voz o texto.\n\n"
-                "🌟 *PLAN GRATIS:* Registro de ventas/gastos y saldo diario.\n"
-                "👑 *PLAN PREMIUM:* Todo lo anterior + Resúmenes en PDF 📄, Gráficas 📊, "
-                "y recordatorios de Nóminas, Impuestos y Renta 📅.\n\n"
-                "¿Con qué plan empezamos?\n1️⃣ *PLAN GRATIS*\n2️⃣ *PLAN PREMIUM*"
+                "¡Hola! 👋 Soy tu Asistente Financiero Inteligente.\n\n"
+                "¿Con qué plan empezamos?\n1️⃣ *PLAN NORMAL*\n2️⃣ *PLAN PREMIUM* (PDFs, Gráficas y Recordatorios)"
             )
             enviar_mensaje_whatsapp(bienvenida, numero_usuario)
             return
 
         user = usuarios_memoria[numero_usuario]
-        input_ia = ""
+        input_usuario = ""
 
         if tipo == "text":
-            input_ia = msg['text']['body']
+            input_usuario = msg['text']['body']
         elif tipo == "audio":
             path = descargar_audio(msg['audio']['id'])
             if path:
                 with open(path, "rb") as f:
-                    input_ia = llamar_gemini([types.Part.from_bytes(data=f.read(), mime_type="audio/ogg"),
-                                             types.Part.from_text(text="Transcribe este audio.")] )
+                    input_usuario = llamar_gemini([types.Part.from_bytes(data=f.read(), mime_type="audio/ogg"),
+                                                 types.Part.from_text(text="Transcribe este audio financiero.")] )
                 os.remove(path)
 
-        # Lógica de estados
+        # --- FLUJO DE ESTADOS ---
         if user["estado"] == "PLAN":
-            user["plan"] = "PREMIUM" if "PREMIUM" in input_ia.upper() or "2" in input_ia else "GRATIS"
+            user["plan"] = "PREMIUM" if "PREMIUM" in input_usuario.upper() or "2" in input_usuario else "NORMAL"
             user["estado"] = "ENCUESTA"
-            encuesta = "¡Excelente elección! 🚀 Para configurar tu tablero, cuéntame:\n\n1️⃣ Giro del negocio\n2️⃣ Colonia\n3️⃣ ¿Pagas renta?"
+            encuesta = (
+                f"Elegiste el plan {user['plan']}. 🚀\n\n"
+                "Para personalizar tu asesoría, responde estas 11 preguntas:\n"
+                "1.Giro 2.Colonia 3.Antigüedad 4.Renta 5.Insumos/sem 6.Impuestos 7.Nómina/quin 8.Empleados 9.Ticket promedio 10.Servicios 11.Meta ahorro."
+            )
             enviar_mensaje_whatsapp(encuesta, numero_usuario)
-        
+
         elif user["estado"] == "ENCUESTA":
-            user["perfil"] = input_ia
+            user["perfil"] = input_usuario
             if user["plan"] == "PREMIUM":
                 user["estado"] = "FECHAS_PREMIUM"
-                pregunta_fechas = (
-                    "✨ *Configuración Premium:* Para tus recordatorios, dime:\n\n"
-                    "📅 ¿Qué días pagas nómina?\n🏠 ¿Qué día pagas renta?\n💡 ¿Qué días pagas servicios (Luz, Agua, Gas)?"
-                )
-                enviar_mensaje_whatsapp(pregunta_fechas, numero_usuario)
+                enviar_mensaje_whatsapp("👑 *Premium:* ¿Qué días pagas nómina, renta y servicios? (Para tus recordatorios)", numero_usuario)
             else:
                 user["estado"] = "ACTIVO"
-                enviar_mensaje_whatsapp("¡Listo! ✅ Ya puedes reportar tus VENTAS o GASTOS.", numero_usuario)
+                enviar_mensaje_whatsapp("✅ ¡Listo! Ya puedes reportar ventas o gastos (Voz o texto).", numero_usuario)
 
         elif user["estado"] == "FECHAS_PREMIUM":
-            user["fechas_pago"] = input_ia
+            user["fechas_pago"] = input_usuario
             user["estado"] = "ACTIVO"
-            enviar_mensaje_whatsapp("¡Configuración Premium completa! 👑 Ya puedes reportar tus VENTAS o GASTOS.", numero_usuario)
+            enviar_mensaje_whatsapp("👑 ¡Configuración Premium lista! Ya puedes reportar tus movimientos.", numero_usuario)
 
         else:
-            # FLUJO ACTIVO: Registro de transacciones
-            user["historial"].append(f"Usuario: {input_ia}")
+            # OPERACIÓN ACTIVA
             prompt = (
-                f"Eres un Asesor Financiero experto. Perfil: {user['perfil']}. Plan: {user['plan']}. "
-                f"Fechas especiales: {user['fechas_pago']}. "
-                f"Saldo actual: Efectivo ${user['efectivo']}, Tarjeta ${user['tarjeta']}. "
-                f"Historial: {user['historial'][-3:]}. "
+                f"Eres un Asesor Financiero. Perfil: {user['perfil']}. Plan: {user['plan']}. "
+                f"Saldos: Efectivo ${user['efectivo']}, Tarjeta ${user['tarjeta']}. "
+                f"Mensaje del usuario: {input_usuario}. "
                 "\nINSTRUCCIONES:\n"
-                "1. Ventas = montos POSITIVOS. Gastos/Pagos = montos NEGATIVOS.\n"
-                "2. Si es una venta mixta, sepáralas.\n"
-                "3. Al final usa SIEMPRE: [EFECTIVO: monto] y/o [TARJETA: monto].\n"
-                "4. Si el plan es PREMIUM, da un consejo proactivo sobre sus fechas de pago si son próximas."
+                "1. Si es venta, usa montos positivos. Si es gasto/pago, negativos.\n"
+                "2. Genera UNA SOLA VEZ al final: [EFECTIVO: monto] o [TARJETA: monto].\n"
+                "3. Da un consejo breve basado en su perfil (ej: si gasta mucho en renta, menciona el peso sobre sus ingresos)."
             )
             
             res_ia = llamar_gemini(prompt)
 
             if res_ia:
-                # Procesamiento de saldos (Suma de positivos y negativos)
-                for medio in ["EFECTIVO", "TARJETA"]:
-                    tag = f"[{medio}:"
-                    if tag in res_ia:
-                        try:
-                            partes = res_ia.split(tag)
-                            for p in partes[1:]:
-                                monto = float(p.split("]")[0].strip())
-                                if medio == "EFECTIVO": user["efectivo"] += monto
-                                else: user["tarjeta"] += monto
-                        except: pass
+                # --- EXTRACCIÓN MEJORADA (Evita duplicados) ---
+                montos_encontrados = re.findall(r"\[(EFECTIVO|TARJETA):\s*(-?\d+\.?\d*)\]", res_ia)
                 
-                # Limpiar la respuesta para el usuario
-                respuesta_limpia = res_ia.split("[EFECTIVO:")[0].split("[TARJETA:")[0].strip()
+                for medio, monto_str in montos_encontrados:
+                    monto = float(monto_str)
+                    if medio == "EFECTIVO": user["efectivo"] += monto
+                    else: user["tarjeta"] += monto
                 
-                total = user["efectivo"] + user["tarjeta"]
+                # Limpiamos la respuesta visual
+                respuesta_visual = re.sub(r"\[.*?\]", "", res_ia).strip()
+                
                 reporte = (
-                    f"\n\n--- 📊 *REPORTE ACTUAL* ---\n"
-                    f"💵 *Efectivo:* ${user['efectivo']:.2f}\n"
-                    f"💳 *Tarjeta:* ${user['tarjeta']:.2f}\n"
-                    f"💰 *Balance:* ${total:.2f}"
+                    f"\n\n--- 📊 *BALANCE* ---\n"
+                    f"💵 Efectivo: ${user['efectivo']:.2f}\n"
+                    f"💳 Tarjeta: ${user['tarjeta']:.2f}\n"
+                    f"💰 Total: ${user['efectivo'] + user['tarjeta']:.2f}"
                 )
-                
-                respuesta_final = respuesta_limpia + reporte
-                user["historial"].append(f"IA: {respuesta_final}")
-                enviar_mensaje_whatsapp(respuesta_final, numero_usuario)
-                
-    except Exception as e:
-        print(f"Error en hilo: {e}")
+                enviar_mensaje_whatsapp(respuesta_visual + reporte, numero_usuario)
 
-# --- 4. RUTAS ---
+    except Exception as e: print(f"Error: {e}")
+
+# --- 4. RUTAS Y PUERTO ---
 @app.route("/")
-def index(): return "Asesor Financiero EBC v7.0 - Premium Activo", 200
+def index(): return "Bot EBC v8.0 - OK", 200
 
 @app.route('/webhook', methods=['GET'])
 def verificar_webhook():
@@ -170,14 +154,11 @@ def recibir_mensajes():
         value = datos['entry'][0]['changes'][0]['value']
         if 'messages' in value:
             msg = value['messages'][0]
-            numero_usuario = msg['from']
-            tipo = msg['type']
-            thread = threading.Thread(target=procesar_y_responder, args=(numero_usuario, tipo, msg))
+            thread = threading.Thread(target=procesar_y_responder, args=(msg['from'], msg['type'], msg))
             thread.start()
-    except Exception as e: print(f"Error Webhook: {e}")
+    except: pass
     return make_response("OK", 200)
 
 if __name__ == '__main__':
-    # AJUSTE VITAL PARA RENDER: Usar el puerto de la variable de entorno
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
