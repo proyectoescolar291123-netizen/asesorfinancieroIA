@@ -18,8 +18,24 @@ client = genai.Client(api_key=GEMINI_KEY)
 MODELOS_A_PROBAR = ["gemini-3-flash-preview", "gemini-1.5-flash-latest"]
 
 usuarios_memoria = {}
+mensajes_procesados = set()
 
-# --- 2. FUNCIONES DE APOYO ---
+# --- 2. PREGUNTAS DE LA ENCUESTA ---
+PREGUNTAS_ENCUESTA = [
+    "1️⃣ ¿En qué consiste tu negocio? (Ej: Cafetería, hostal, papelería).",
+    "2️⃣ ¿En qué colonia se encuentra?",
+    "3️⃣ ¿Es un negocio nuevo o ya tiene tiempo en la zona?",
+    "4️⃣ ¿Cuánto pagas de renta al mes? 🏠",
+    "5️⃣ ¿Cuánto inviertes en insumos a la semana? 📦",
+    "6️⃣ ¿Cuánto pagas de impuestos al mes? 🏦",
+    "7️⃣ ¿Cuánto pagas de nómina por quincena? 👥",
+    "8️⃣ ¿Cuántos empleados tienes?",
+    "9️⃣ ¿Cuál es tu ticket promedio de venta? (Lo que gasta un cliente promedio).",
+    "🔟 ¿A cuánto ascienden tus recibos de luz, agua e internet al mes? 💡",
+    "1️⃣1️⃣ ¿Tienes alguna meta de ahorro o reinversión mensual? 💰"
+]
+
+# --- 3. FUNCIONES DE APOYO ---
 def enviar_mensaje_whatsapp(texto, numero):
     numero_limpio = str(numero).replace("+", "")
     url = f"https://graph.facebook.com/v18.0/{PHONE_ID}/messages"
@@ -47,20 +63,23 @@ def descargar_audio(media_id):
     with open(path, "wb") as f: f.write(archivo.content)
     return path
 
-# --- 3. LÓGICA PRINCIPAL ---
-def procesar_y_responder(numero_usuario, tipo, msg):
+# --- 4. LÓGICA PRINCIPAL ---
+def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
+    if msg_id in mensajes_procesados: return
+    mensajes_procesados.add(msg_id)
+
     try:
         if numero_usuario not in usuarios_memoria:
             usuarios_memoria[numero_usuario] = {
                 "estado": "PLAN", "plan": "", "perfil": "", 
                 "efectivo": 0.0, "tarjeta": 0.0, "historial": [],
-                "fechas_pago": ""
+                "fechas_pago": "", "indice_pregunta": 0
             }
             bienvenida = (
-                "¡Hola! 👋 Soy tu Asistente Financiero Inteligente Columba IA.\n\n"
+                "¡Hola! 👋 Soy tu Asistente Financiero Columba IA.\n\n"
                 "¿Con qué plan empezamos?\n\n"
-                "1️⃣ *PLAN NORMAL*: Registro de ventas/gastos y saldo diario. 📉\n"
-                "2️⃣ *PLAN PREMIUM*: PDFs 📄, Gráficas 📊 y Recordatorios de pagos. 👑"
+                "1️⃣ *PLAN NORMAL*: Registro de ventas/gastos. 📉\n"
+                "2️⃣ *PLAN PREMIUM*: PDFs, Gráficas y Recordatorios. 👑"
             )
             enviar_mensaje_whatsapp(bienvenida, numero_usuario)
             return
@@ -75,75 +94,70 @@ def procesar_y_responder(numero_usuario, tipo, msg):
             if path:
                 with open(path, "rb") as f:
                     input_usuario = llamar_gemini([types.Part.from_bytes(data=f.read(), mime_type="audio/ogg"),
-                                                 types.Part.from_text(text="Transcribe este audio financiero.")] )
+                                                 types.Part.from_text(text="Transcribe este audio.")] )
                 os.remove(path)
 
         # --- FLUJO DE ESTADOS ---
         if user["estado"] == "PLAN":
             user["plan"] = "PREMIUM" if "PREMIUM" in input_usuario.upper() or "2" in input_usuario else "NORMAL"
             user["estado"] = "ENCUESTA"
-            encuesta = (
-                f"¡Excelente elección! Elegiste el plan {user['plan']}. 🚀\n\n"
-                "Para personalizar tu asesoría, por favor responde (en un solo mensaje o audio):\n\n"
-                "1️⃣ Giro 2️⃣ Colonia 3️⃣ Antigüedad 4️⃣ Renta 🏠 5️⃣ Insumos/sem 📦 "
-                "6️⃣ Impuestos 🏦 7️⃣ Nómina/quin 👥 8️⃣ Empleados 9️⃣ Ticket promedio 🔟 Servicios 💡 1️⃣1️⃣ Meta ahorro 💰"
-            )
-            enviar_mensaje_whatsapp(encuesta, numero_usuario)
+            enviar_mensaje_whatsapp(f"¡Excelente! Elegiste el plan {user['plan']}. 🚀\n\nConfiguraremos tu perfil. Responde estas preguntas una por una:\n\n" + PREGUNTAS_ENCUESTA[0], numero_usuario)
 
         elif user["estado"] == "ENCUESTA":
-            user["perfil"] = input_usuario
-            if user["plan"] == "PREMIUM":
-                user["estado"] = "FECHAS_PREMIUM"
-                enviar_mensaje_whatsapp("👑 *Configuración Premium:* ¿Qué días pagas nómina, renta y servicios? (Para enviarte recordatorios 📅)", numero_usuario)
+            idx = user["indice_pregunta"]
+            user["perfil"] += f"P{idx+1}: {input_usuario} | "
+            
+            if idx + 1 < len(PREGUNTAS_ENCUESTA):
+                user["indice_pregunta"] += 1
+                enviar_mensaje_whatsapp(PREGUNTAS_ENCUESTA[user["indice_pregunta"]], numero_usuario)
             else:
-                user["estado"] = "ACTIVO"
-                enviar_mensaje_whatsapp("✅ ¡Listo! Ya puedes reportar tus ventas o gastos por voz o texto.", numero_usuario)
+                if user["plan"] == "PREMIUM":
+                    user["estado"] = "FECHAS_PREMIUM"
+                    enviar_mensaje_whatsapp("👑 *Premium:* ¿Qué días pagas nómina, renta y servicios? (Para recordatorios 📅)", numero_usuario)
+                else:
+                    user["estado"] = "ACTIVO"
+                    enviar_mensaje_whatsapp("✅ ¡Perfil listo! Ya puedes reportar tus ventas o gastos.", numero_usuario)
 
         elif user["estado"] == "FECHAS_PREMIUM":
             user["fechas_pago"] = input_usuario
             user["estado"] = "ACTIVO"
-            enviar_mensaje_whatsapp("👑 ¡Configuración Premium lista! Ya puedes reportar tus movimientos. 🚀", numero_usuario)
+            enviar_mensaje_whatsapp("👑 ¡Configuración Premium lista! 🚀 Ya puedes empezar.", numero_usuario)
 
         else:
             # OPERACIÓN ACTIVA
             prompt = (
-                f"Eres un Asesor Financiero experto. Perfil: {user['perfil']}. Plan: {user['plan']}. "
-                f"Saldos: Efectivo ${user['efectivo']}, Tarjeta ${user['tarjeta']}. "
-                f"Mensaje del usuario: {input_usuario}. "
+                f"Asesor Financiero. Perfil: {user['perfil']}. Plan: {user['plan']}. "
+                f"Saldos: Efe ${user['efectivo']}, Tarj ${user['tarjeta']}. "
+                f"Usuario dice: {input_usuario}. "
                 "\nINSTRUCCIONES:\n"
-                "1. Ventas = POSITIVOS. Gastos/Pagos = NEGATIVOS.\n"
+                "1. Ventas = (+) Gastos = (-).\n"
                 "2. Genera UNA SOLA VEZ al final: [EFECTIVO: monto] o [TARJETA: monto].\n"
-                "3. Da un consejo breve y amable con emojis usando su perfil."
+                "3. Da un consejo breve con emojis.\n"
+                "4. Al final añade: '💡 *Puedes preguntarme:*' y 3 sugerencias cortas basadas en su perfil."
             )
             
             res_ia = llamar_gemini(prompt)
 
             if res_ia:
-                # EXTRACCIÓN CON REGEX PARA EVITAR DUPLICADOS
-                montos_encontrados = re.findall(r"\[(EFECTIVO|TARJETA):\s*(-?\d+\.?\d*)\]", res_ia)
-                
-                for medio, monto_str in montos_encontrados:
+                montos = re.findall(r"\[(EFECTIVO|TARJETA):\s*(-?\d+\.?\d*)\]", res_ia)
+                for medio, monto_str in montos:
                     monto = float(monto_str)
                     if medio == "EFECTIVO": user["efectivo"] += monto
                     else: user["tarjeta"] += monto
                 
-                # Limpiamos los corchetes de la respuesta visual
                 respuesta_visual = re.sub(r"\[.*?\]", "", res_ia).strip()
-                
-                total = user["efectivo"] + user["tarjeta"]
                 reporte = (
-                    f"\n\n--- 📊 *BALANCE ACTUAL* ---\n"
-                    f"💵 *Efectivo:* ${user['efectivo']:.2f}\n"
-                    f"💳 *Tarjeta:* ${user['tarjeta']:.2f}\n"
-                    f"💰 *Total:* ${total:.2f}"
+                    f"\n\n--- 📊 *BALANCE* ---\n"
+                    f"💵 *Efe:* ${user['efectivo']:.2f} | 💳 *Tarj:* ${user['tarjeta']:.2f}\n"
+                    f"💰 *Total:* ${user['efectivo'] + user['tarjeta']:.2f}"
                 )
                 enviar_mensaje_whatsapp(respuesta_visual + reporte, numero_usuario)
 
     except Exception as e: print(f"Error: {e}")
 
-# --- 4. RUTAS Y PUERTO ---
+# --- 5. RUTAS ---
 @app.route("/")
-def index(): return "Bot EBC v8.1 - OK", 200
+def index(): return "Columba IA v9.5 - Live", 200
 
 @app.route('/webhook', methods=['GET'])
 def verificar_webhook():
@@ -158,7 +172,7 @@ def recibir_mensajes():
         value = datos['entry'][0]['changes'][0]['value']
         if 'messages' in value:
             msg = value['messages'][0]
-            thread = threading.Thread(target=procesar_y_responder, args=(msg['from'], msg['type'], msg))
+            thread = threading.Thread(target=procesar_y_responder, args=(msg['from'], msg['type'], msg, msg['id']))
             thread.start()
     except: pass
     return make_response("OK", 200)
