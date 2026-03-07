@@ -157,7 +157,7 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
 
 # --- 5. RUTAS ---
 @app.route("/")
-def index(): return "Columba IA v9.5 - Live", 200
+def index(): return "Columba IA v9.6 - Live", 200
 
 @app.route('/webhook', methods=['GET'])
 def verificar_webhook():
@@ -169,12 +169,24 @@ def verificar_webhook():
 def recibir_mensajes():
     datos = request.get_json()
     try:
-        value = datos['entry'][0]['changes'][0]['value']
+        # Extraer datos de la estructura de WhatsApp
+        entry = datos.get('entry', [{}])[0]
+        changes = entry.get('changes', [{}])[0]
+        value = changes.get('value', {})
+        
         if 'messages' in value:
             msg = value['messages'][0]
-            thread = threading.Thread(target=procesar_y_responder, args=(msg['from'], msg['type'], msg, msg['id']))
+            # Lanzamos el hilo para procesamiento largo
+            thread = threading.Thread(
+                target=procesar_y_responder, 
+                args=(msg['from'], msg['type'], msg, msg['id'])
+            )
             thread.start()
-    except: pass
+            
+    except Exception as e: 
+        print(f"Error en recepción: {e}")
+    
+    # RESPUESTA INMEDIATA PARA RENDER/WHATSAPP
     return make_response("OK", 200)
 
 if __name__ == '__main__':
