@@ -40,7 +40,8 @@ if faltantes:
 
 client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
-MODELOS_A_PROBAR = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
+# Prioridad: Lite responde en <800ms y evita los picos 503 del modelo 3.6
+MODELOS_A_PROBAR = ["gemini-3.5-flash-lite", "gemini-3.6-flash"]
 
 _locks_usuarios = {}
 _locks_lock = threading.Lock()
@@ -146,7 +147,7 @@ def enviar_mensaje_whatsapp(texto, numero):
     headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
     data = {"messaging_product": "whatsapp", "to": numero_limpio, "type": "text", "text": {"body": texto}}
     try:
-        r = requests.post(url, headers=headers, json=data, timeout=15)
+        r = requests.post(url, headers=headers, json=data, timeout=8)
         if r.status_code >= 400:
             log.error(f"WhatsApp API error {r.status_code}: {r.text}")
         return r.status_code
@@ -162,7 +163,7 @@ def llamar_gemini(contenido_prompt, json_mode=False):
             response = client.models.generate_content(
                 model=nombre_modelo, contents=contenido_prompt, config=config
             )
-            if response.text:
+            if response and response.text:
                 return response.text
         except Exception as e:
             log.warning(f"Fallo en modelo {nombre_modelo}: {e}")
@@ -171,22 +172,55 @@ def llamar_gemini(contenido_prompt, json_mode=False):
     return None
 
 
-def descargar_audio(media_id):
+def transcribir_audio(media_id):
     headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
     try:
         url_media = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{media_id}"
-        res = requests.get(url_media, headers=headers, timeout=15)
-        file_url = res.json().get("url")
+        res = requests.get(url_media, headers=headers, timeout=8)
+        if res.status_code >= 400:
+            return None, True
+
+        info = res.json()
+        file_url = info.get("url")
         if not file_url:
-            return None
-        archivo = requests.get(file_url, headers=headers, timeout=30)
-        fd, path = tempfile.mkstemp(suffix=".ogg")
-        with os.fdopen(fd, "wb") as f:
-            f.write(archivo.content)
-        return path
-    except Exception as e:
-        log.error(f"Fallo descargando audio {media_id}: {e}")
-        return None
+            return None, True
+
+        session = requests.Session()
+        session.headers.update(headers)
+        archivo = session.get(file_url, timeout=12)
+        if archivo.status_code >= 400 or len(archivo.content) == 0:
+            return None, True
+
+        contenido = archivo.content
+    except requests.RequestException:
+        return None, True
+
+    if client is None:
+        return None, True
+
+    mime_type = "audio/ogg"
+
+    for nombre_modelo in MODELOS_A_PROBAR:
+        try:
+            response = client.models.generate_content(
+                model=nombre_modelo,
+                contents=[
+                    types.Part.from_bytes(data=contenido, mime_type=mime_type),
+                    types.Part.from_text(
+                        text="Transcribe el audio textualmente en español. "
+                             "Si menciona dinero o compras/ventas, conserva los números exactos. "
+                             "Devuelve solo la transcripción limpia sin comentarios."
+                    ),
+                ],
+            )
+            texto = (response.text or "").strip()
+            if texto:
+                return texto, False
+        except Exception as e:
+            log.warning(f"Fallo audio con {nombre_modelo}: {e}")
+            continue
+
+    return None, True
 
 
 def verificar_firma(payload_bytes, firma_header):
@@ -219,7 +253,7 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
             if not input_usuario:
                 if error_audio:
                     enviar_mensaje_whatsapp(
-                        "🎙️ No pude procesar tu nota de voz esta vez. ¿Puedes escribírmelo o intentar de nuevo?",
+                        "🎙️ Hubo un retraso procesando la nota de voz. Por favor repítela brevemente.",
                         numero_usuario,
                     )
                 else:
@@ -233,7 +267,6 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
 
             if user is None:
                 crear_usuario(numero_usuario)
-                user = obtener_usuario(numero_usuario)
                 bienvenida = (
                     "¡Hola! 👋 Soy tu Asistente Financiero *Columba IA*.\n\n"
                     "Llevo el control de tus ventas y gastos al momento. Solo dime qué vendiste o compraste por texto o nota de voz.\n\n"
@@ -264,109 +297,39 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
             log.exception(f"Error procesando a {numero_usuario}")
 
 
-def transcribir_audio(media_id):
-    """
-    Descarga y transcribe una nota de voz. Devuelve (texto, hubo_error).
-    Registra en el log EXACTAMENTE en qué paso falló, para poder diagnosticar
-    desde los logs de Render sin adivinar.
-    """
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
-    try:
-        url_media = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{media_id}"
-        res = requests.get(url_media, headers=headers, timeout=15)
-        if res.status_code >= 400:
-            log.error(f"[AUDIO] Error obteniendo metadata del media {media_id}: "
-                      f"status={res.status_code} body={res.text[:300]}")
-            return None, True
-
-        info = res.json()
-        file_url = info.get("url")
-        if not file_url:
-            log.error(f"[AUDIO] La respuesta de Meta no trae 'url': {info}")
-            return None, True
-
-        archivo = requests.get(file_url, headers=headers, timeout=30)
-        if archivo.status_code >= 400:
-            log.error(f"[AUDIO] Error descargando el binario del audio: status={archivo.status_code}")
-            return None, True
-
-        contenido = archivo.content
-        log.info(f"[AUDIO] Descargado OK: {len(contenido)} bytes, mime reportado={info.get('mime_type')}")
-        if len(contenido) == 0:
-            log.error("[AUDIO] El archivo descargado está vacío (0 bytes).")
-            return None, True
-
-    except requests.RequestException as e:
-        log.error(f"[AUDIO] Excepción de red descargando audio {media_id}: {e}")
-        return None, True
-
-    if client is None:
-        log.error("[AUDIO] No hay cliente de Gemini configurado (falta GEMINI_API_KEY).")
-        return None, True
-
-    mime_type = info.get("mime_type", "audio/ogg").split(";")[0]  # WhatsApp a veces manda "audio/ogg; codecs=opus"
-
-    for nombre_modelo in MODELOS_A_PROBAR:
-        try:
-            response = client.models.generate_content(
-                model=nombre_modelo,
-                contents=[
-                    types.Part.from_bytes(data=contenido, mime_type=mime_type),
-                    types.Part.from_text(text="Transcribe exactamente este audio en español. Si menciona cantidades o dinero, mantenlas intactas."),
-                ],
-            )
-            texto = (response.text or "").strip()
-            if texto:
-                log.info(f"[AUDIO] Transcripción OK con {nombre_modelo}: {texto[:80]!r}")
-                return texto, False
-            log.warning(f"[AUDIO] {nombre_modelo} devolvió transcripción vacía.")
-        except Exception as e:
-            log.warning(f"[AUDIO] Fallo transcribiendo con {nombre_modelo}: {e}")
-            continue
-
-    log.error("[AUDIO] Todos los modelos fallaron al transcribir.")
-    return None, True
-
-
 def procesar_operacion_financiera(numero_usuario, user, input_usuario):
-    prompt_clasificacion = (
-        "Eres un clasificador contable para pequeños comercios en México.\n"
-        f"Mensaje del usuario: \"{input_usuario}\"\n\n"
-        "Reglas:\n"
-        "- Si el usuario menciona una venta, ingreso o cobro: tipo='venta'.\n"
-        "- Si menciona un gasto, pago, compra, renta o insumos: tipo='gasto'.\n"
-        "- Extrae el monto numérico (ej. '150', '2.5k' -> 2500).\n"
-        "- Método de pago: 'efectivo' o 'tarjeta' (por defecto 'efectivo').\n\n"
-        "Responde EXCLUSIVAMENTE con este JSON:\n"
-        '{"es_movimiento": true|false, "tipo": "venta"|"gasto"|null, "medio": "efectivo"|"tarjeta"|null, "monto": 100.0, "descripcion": "concepto breve"}'
-    )
+    # Detección ultra-rápida local (Regex): si el usuario fue directo, no espera a Gemini
+    match_num = re.search(r"(\d+(?:\.\d+)?)", input_usuario.replace(",", ""))
+    texto_min = input_usuario.lower()
+    palabras_venta = ["vendi", "vendí", "cobre", "cobré", "ingreso", "venta"]
+    palabras_gasto = ["gaste", "gasté", "pague", "pagué", "compre", "compré", "renta", "luz", "gasto"]
 
-    respuesta_json = llamar_gemini(prompt_clasificacion, json_mode=True)
     datos = None
-
-    if respuesta_json:
-        try:
-            limpio = re.sub(r"^```json|```$", "", respuesta_json.strip())
-            datos = json.loads(limpio)
-        except Exception:
-            datos = None
-
-    if not datos or not datos.get("es_movimiento"):
-        match_num = re.search(r"(\d+(?:\.\d+)?)", input_usuario.replace(",", ""))
-        palabras_venta = ["vendi", "vendí", "cobre", "cobré", "ingreso", "venta"]
-        palabras_gasto = ["gaste", "gasté", "pague", "pagué", "compre", "compré", "renta", "luz", "gasto"]
-
-        texto_min = input_usuario.lower()
-        if match_num and (any(p in texto_min for p in palabras_venta) or any(p in texto_min for p in palabras_gasto)):
-            tipo = "venta" if any(p in texto_min for p in palabras_venta) else "gasto"
-            medio = "tarjeta" if "tarjeta" in texto_min else "efectivo"
-            datos = {
-                "es_movimiento": True,
-                "tipo": tipo,
-                "medio": medio,
-                "monto": float(match_num.group(1)),
-                "descripcion": input_usuario[:45]
-            }
+    if match_num and (any(p in texto_min for p in palabras_venta) or any(p in texto_min for p in palabras_gasto)):
+        tipo = "venta" if any(p in texto_min for p in palabras_venta) else "gasto"
+        medio = "tarjeta" if "tarjeta" in texto_min else "efectivo"
+        datos = {
+            "es_movimiento": True,
+            "tipo": tipo,
+            "medio": medio,
+            "monto": float(match_num.group(1)),
+            "descripcion": input_usuario[:45]
+        }
+    else:
+        # Si no hubo match directo, recurre a Gemini
+        prompt_clasificacion = (
+            "Eres clasificador contable rápido. Mensaje: "
+            f"\"{input_usuario}\".\n"
+            "Devuelve únicamente JSON:\n"
+            '{"es_movimiento": true|false, "tipo": "venta"|"gasto"|null, "medio": "efectivo"|"tarjeta"|null, "monto": 100.0, "descripcion": "concepto"}'
+        )
+        respuesta_json = llamar_gemini(prompt_clasificacion, json_mode=True)
+        if respuesta_json:
+            try:
+                limpio = re.sub(r"^```json|```$", "", respuesta_json.strip())
+                datos = json.loads(limpio)
+            except Exception:
+                datos = None
 
     if datos and datos.get("es_movimiento") and datos.get("monto"):
         monto = abs(float(datos["monto"]))
@@ -385,11 +348,12 @@ def procesar_operacion_financiera(numero_usuario, user, input_usuario):
         )
         return
 
+    # Charla amigable breve
     prompt_charla = (
-        f"Eres Columba IA, un asistente financiero empático y cercano para micronegocios. El usuario dijo: '{input_usuario}'. "
-        "Responde en 2 líneas amigables y sugiérele registrar alguna venta o gasto."
+        f"Eres Columba IA. El usuario dice: '{input_usuario}'. "
+        "Responde amigable en 1 línea corta y dile que puede decirte una venta o gasto."
     )
-    texto = llamar_gemini(prompt_charla) or "¡Hola! Dime qué venta o gasto realizaste hoy y lo anoto en tu balance. 📊"
+    texto = llamar_gemini(prompt_charla) or "¡Hola! Cuéntame qué vendiste o compraste hoy y lo anoto al balance. 📈"
     enviar_mensaje_whatsapp(texto.strip(), numero_usuario)
 
 
@@ -443,7 +407,7 @@ def procesar_confirmacion(numero_usuario, user, input_usuario):
 
 @app.route("/")
 def index():
-    return "Columba IA v10.3 - Debug de Audio", 200
+    return "Columba IA v10.4 - Ultra Fast", 200
 
 
 @app.route("/webhook", methods=["GET"])
@@ -468,7 +432,6 @@ def recibir_mensajes():
         value = changes.get("value", {})
         if "messages" in value:
             msg = value["messages"][0]
-            log.info(f"[WEBHOOK] Mensaje recibido, tipo={msg.get('type')}, from={msg.get('from')}")
             thread = threading.Thread(
                 target=procesar_y_responder,
                 args=(msg["from"], msg["type"], msg, msg["id"]),
