@@ -40,7 +40,6 @@ if faltantes:
 
 client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
-# Modelos oficiales vigentes en la API de Google GenAI
 MODELOS_A_PROBAR = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"]
 
 _locks_usuarios = {}
@@ -54,7 +53,6 @@ def lock_de(numero):
         return _locks_usuarios[numero]
 
 
-# --- 2. PERSISTENCIA (SQLite) ---
 @contextmanager
 def db():
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -142,7 +140,6 @@ def registrar_movimiento(numero, medio, monto, descripcion):
         )
 
 
-# --- 3. COMUNICACIÓN & IA ---
 def enviar_mensaje_whatsapp(texto, numero):
     numero_limpio = str(numero).replace("+", "")
     url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{PHONE_ID}/messages"
@@ -201,7 +198,6 @@ def verificar_firma(payload_bytes, firma_header):
     return hmac.compare_digest(esperado, firma_header)
 
 
-# --- 4. CONTROL Y LÓGICA DE NEGOCIO ---
 def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
     if ya_procesado(msg_id):
         return
@@ -210,35 +206,31 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
         try:
             user = obtener_usuario(numero_usuario)
 
-            # 1. Obtener texto del mensaje o transcribir audio
             input_usuario = ""
+            error_audio = False
+
             if tipo == "text":
                 input_usuario = msg["text"]["body"]
             elif tipo == "audio":
-                path = descargar_audio(msg["audio"]["id"])
-                if path:
-                    try:
-                        with open(path, "rb") as f:
-                            input_usuario = llamar_gemini([
-                                types.Part.from_bytes(data=f.read(), mime_type="audio/ogg"),
-                                types.Part.from_text(text="Transcribe exactamente este audio en español. Si menciona cantidades o dinero, mantenlas intactas."),
-                            ]) or ""
-                    finally:
-                        if os.path.exists(path):
-                            os.remove(path)
+                input_usuario, error_audio = transcribir_audio(msg["audio"]["id"])
 
-            input_usuario = input_usuario.strip()
+            input_usuario = (input_usuario or "").strip()
+
             if not input_usuario:
-                enviar_mensaje_whatsapp("No logré entender el mensaje 🙏 ¿Podrías repetirlo?", numero_usuario)
+                if error_audio:
+                    enviar_mensaje_whatsapp(
+                        "🎙️ No pude procesar tu nota de voz esta vez. ¿Puedes escribírmelo o intentar de nuevo?",
+                        numero_usuario,
+                    )
+                else:
+                    enviar_mensaje_whatsapp("No logré entender el mensaje 🙏 ¿Podrías repetirlo?", numero_usuario)
                 return
 
-            # Comando para resetear datos en vivo antes de la demo
             if input_usuario.lower() in ["reiniciar", "reset"]:
                 actualizar_usuario(numero_usuario, estado="ACTIVO", efectivo=0.0, tarjeta=0.0, pendiente=None, contador_movimientos=0)
                 enviar_mensaje_whatsapp("🔄 Balance reseteado a $0.00. Listo para tu demostración.", numero_usuario)
                 return
 
-            # Usuario nuevo
             if user is None:
                 crear_usuario(numero_usuario)
                 user = obtener_usuario(numero_usuario)
@@ -250,12 +242,10 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
                 enviar_mensaje_whatsapp(bienvenida, numero_usuario)
                 return
 
-            # Si está pendiente de confirmación
             if user["estado"] == "CONFIRMANDO":
                 procesar_confirmacion(numero_usuario, user, input_usuario)
                 return
 
-            # Upgrade a Premium manual
             if re.search(r"\b(premium|plan premium|comprar)\b", input_usuario, re.I):
                 actualizar_usuario(numero_usuario, plan="PREMIUM")
                 enviar_mensaje_whatsapp(
@@ -268,11 +258,74 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
                 )
                 return
 
-            # Evaluar movimiento financiero
             procesar_operacion_financiera(numero_usuario, user, input_usuario)
 
         except Exception:
             log.exception(f"Error procesando a {numero_usuario}")
+
+
+def transcribir_audio(media_id):
+    """
+    Descarga y transcribe una nota de voz. Devuelve (texto, hubo_error).
+    Registra en el log EXACTAMENTE en qué paso falló, para poder diagnosticar
+    desde los logs de Render sin adivinar.
+    """
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+    try:
+        url_media = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{media_id}"
+        res = requests.get(url_media, headers=headers, timeout=15)
+        if res.status_code >= 400:
+            log.error(f"[AUDIO] Error obteniendo metadata del media {media_id}: "
+                      f"status={res.status_code} body={res.text[:300]}")
+            return None, True
+
+        info = res.json()
+        file_url = info.get("url")
+        if not file_url:
+            log.error(f"[AUDIO] La respuesta de Meta no trae 'url': {info}")
+            return None, True
+
+        archivo = requests.get(file_url, headers=headers, timeout=30)
+        if archivo.status_code >= 400:
+            log.error(f"[AUDIO] Error descargando el binario del audio: status={archivo.status_code}")
+            return None, True
+
+        contenido = archivo.content
+        log.info(f"[AUDIO] Descargado OK: {len(contenido)} bytes, mime reportado={info.get('mime_type')}")
+        if len(contenido) == 0:
+            log.error("[AUDIO] El archivo descargado está vacío (0 bytes).")
+            return None, True
+
+    except requests.RequestException as e:
+        log.error(f"[AUDIO] Excepción de red descargando audio {media_id}: {e}")
+        return None, True
+
+    if client is None:
+        log.error("[AUDIO] No hay cliente de Gemini configurado (falta GEMINI_API_KEY).")
+        return None, True
+
+    mime_type = info.get("mime_type", "audio/ogg").split(";")[0]  # WhatsApp a veces manda "audio/ogg; codecs=opus"
+
+    for nombre_modelo in MODELOS_A_PROBAR:
+        try:
+            response = client.models.generate_content(
+                model=nombre_modelo,
+                contents=[
+                    types.Part.from_bytes(data=contenido, mime_type=mime_type),
+                    types.Part.from_text(text="Transcribe exactamente este audio en español. Si menciona cantidades o dinero, mantenlas intactas."),
+                ],
+            )
+            texto = (response.text or "").strip()
+            if texto:
+                log.info(f"[AUDIO] Transcripción OK con {nombre_modelo}: {texto[:80]!r}")
+                return texto, False
+            log.warning(f"[AUDIO] {nombre_modelo} devolvió transcripción vacía.")
+        except Exception as e:
+            log.warning(f"[AUDIO] Fallo transcribiendo con {nombre_modelo}: {e}")
+            continue
+
+    log.error("[AUDIO] Todos los modelos fallaron al transcribir.")
+    return None, True
 
 
 def procesar_operacion_financiera(numero_usuario, user, input_usuario):
@@ -298,12 +351,11 @@ def procesar_operacion_financiera(numero_usuario, user, input_usuario):
         except Exception:
             datos = None
 
-    # Mecanismo de respaldo (Regex) en caso de respuesta inesperada del modelo
     if not datos or not datos.get("es_movimiento"):
         match_num = re.search(r"(\d+(?:\.\d+)?)", input_usuario.replace(",", ""))
         palabras_venta = ["vendi", "vendí", "cobre", "cobré", "ingreso", "venta"]
         palabras_gasto = ["gaste", "gasté", "pague", "pagué", "compre", "compré", "renta", "luz", "gasto"]
-        
+
         texto_min = input_usuario.lower()
         if match_num and (any(p in texto_min for p in palabras_venta) or any(p in texto_min for p in palabras_gasto)):
             tipo = "venta" if any(p in texto_min for p in palabras_venta) else "gasto"
@@ -333,7 +385,6 @@ def procesar_operacion_financiera(numero_usuario, user, input_usuario):
         )
         return
 
-    # Si es una consulta conversacional
     prompt_charla = (
         f"Eres Columba IA, un asistente financiero empático y cercano para micronegocios. El usuario dijo: '{input_usuario}'. "
         "Responde en 2 líneas amigables y sugiérele registrar alguna venta o gasto."
@@ -390,10 +441,9 @@ def procesar_confirmacion(numero_usuario, user, input_usuario):
         enviar_mensaje_whatsapp("Por favor responde *Sí* para guardar en el balance o *No* para descartar.", numero_usuario)
 
 
-# --- 5. RUTAS HTTP ---
 @app.route("/")
 def index():
-    return "Columba IA v10.2 - Listo para Demo", 200
+    return "Columba IA v10.3 - Debug de Audio", 200
 
 
 @app.route("/webhook", methods=["GET"])
@@ -418,6 +468,7 @@ def recibir_mensajes():
         value = changes.get("value", {})
         if "messages" in value:
             msg = value["messages"][0]
+            log.info(f"[WEBHOOK] Mensaje recibido, tipo={msg.get('type')}, from={msg.get('from')}")
             thread = threading.Thread(
                 target=procesar_y_responder,
                 args=(msg["from"], msg["type"], msg, msg["id"]),
