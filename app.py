@@ -42,7 +42,7 @@ if faltantes:
 client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
 # Modelos vigentes (ver notas: gemini-1.5-* y gemini-3-flash-preview ya fueron retirados por Google)
-MODELOS_A_PROBAR = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
+MODELOS_A_PROBAR = ["gemini-3-flash-preview", "gemini-1.5-flash-latest"]
 
 # --- 2. PREGUNTAS DE LA ENCUESTA ---
 PREGUNTAS_ENCUESTA = [
