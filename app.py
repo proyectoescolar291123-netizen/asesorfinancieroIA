@@ -253,6 +253,32 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
         try:
             user = obtener_usuario(numero_usuario)
 
+            # 1. Registro si es primera vez que escribe
+            if user is None:
+                crear_usuario(numero_usuario)
+                bienvenida = (
+                    "¡Hola! 👋 Soy tu Asistente Financiero *Columba IA*.\n\n"
+                    "Llevo el control de tus ventas y gastos al momento. Solo dime qué vendiste o compraste por mensaje de texto.\n\n"
+                    "💡 *Prueba con:* 'Vendí 350 en efectivo' o 'Pagué 200 de luz con tarjeta'."
+                )
+                enviar_mensaje_whatsapp(bienvenida, numero_usuario)
+                return
+
+            # 2. Bloqueo de notas de voz para plan gratuito
+            if tipo == "audio" and user.get("plan") != "PREMIUM":
+                mensaje_bloqueo = (
+                    "🎙️ *Función Premium*\n\n"
+                    "El registro de ventas y gastos mediante notas de voz es exclusivo de *Columba Premium* 👑.\n\n"
+                    "Por solo *$59.90 MXN al mes* desbloqueas:\n"
+                    "• Registro por notas de voz ilimitadas 🎙️\n"
+                    "• Reportes y balances en Excel 📊\n"
+                    "• Recordatorios de nómina, renta e impuestos 📅\n\n"
+                    "Escribe *premium* para activar tu plan ahora."
+                )
+                enviar_mensaje_whatsapp(mensaje_bloqueo, numero_usuario)
+                return
+
+            # 3. Procesar entrada (texto o audio permitido)
             input_usuario = ""
             error_audio = False
 
@@ -273,37 +299,37 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
                     enviar_mensaje_whatsapp("No logré entender el mensaje 🙏 ¿Podrías repetirlo?", numero_usuario)
                 return
 
+            # 4. Comando de reinicio para la demo en vivo
             if input_usuario.lower() in ["reiniciar", "reset"]:
-                actualizar_usuario(numero_usuario, estado="ACTIVO", efectivo=0.0, tarjeta=0.0, pendiente=None, contador_movimientos=0)
-                enviar_mensaje_whatsapp("🔄 Balance reseteado a $0.00. Listo para tu demostración.", numero_usuario)
-                return
-
-            if user is None:
-                crear_usuario(numero_usuario)
-                bienvenida = (
-                    "¡Hola! 👋 Soy tu Asistente Financiero *Columba IA*.\n\n"
-                    "Llevo el control de tus ventas y gastos al momento. Solo dime qué vendiste o compraste por texto o nota de voz.\n\n"
-                    "💡 *Prueba con:* 'Vendí 350 en efectivo' o 'Pagué 200 de luz con tarjeta'."
+                actualizar_usuario(
+                    numero_usuario,
+                    estado="ACTIVO",
+                    plan="NORMAL",
+                    efectivo=0.0,
+                    tarjeta=0.0,
+                    pendiente=None,
+                    contador_movimientos=0
                 )
-                enviar_mensaje_whatsapp(bienvenida, numero_usuario)
+                enviar_mensaje_whatsapp("🔄 Balance en $0.00 y plan vuelto a NORMAL. Listo para tu demostración.", numero_usuario)
                 return
 
+            # 5. Confirmación pendiente
             if user["estado"] == "CONFIRMANDO":
                 procesar_confirmacion(numero_usuario, user, input_usuario)
                 return
 
+            # 6. Activación del Plan Premium
             if re.search(r"\b(premium|plan premium|comprar)\b", input_usuario, re.I):
                 actualizar_usuario(numero_usuario, plan="PREMIUM")
                 enviar_mensaje_whatsapp(
                     "👑 *¡Plan Premium Activado!* ($59.90 MXN/mes)\n\n"
-                    "Beneficios habilitados:\n"
-                    "- Registro y balance por notas de voz 🎙️\n"
-                    "- Reportes y gráficas para Excel 📊\n"
-                    "- Recordatorios de nómina, renta e impuestos 📅",
+                    "🎉 *¡Tus notas de voz ya están habilitadas!*\n\n"
+                    "Prueba mandándome un audio ahora mismo diciendo: 'Vendí 300 en efectivo'.",
                     numero_usuario
                 )
                 return
 
+            # 7. Operación contable normal
             procesar_operacion_financiera(numero_usuario, user, input_usuario)
 
         except Exception:
@@ -311,7 +337,6 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
 
 
 def procesar_operacion_financiera(numero_usuario, user, input_usuario):
-    # Detección ultra-rápida local (Regex): responde en milisegundos si detecta patrón
     match_num = re.search(r"(\d+(?:\.\d+)?)", input_usuario.replace(",", ""))
     texto_min = input_usuario.lower()
     palabras_venta = ["vendi", "vendí", "cobre", "cobré", "ingreso", "venta"]
@@ -419,7 +444,7 @@ def procesar_confirmacion(numero_usuario, user, input_usuario):
 # --- 5. RUTAS HTTP ---
 @app.route("/")
 def index():
-    return "Columba IA v10.5 - Anti-503 Resilient", 200
+    return "Columba IA v10.6 - Freemium Voice Gate", 200
 
 
 @app.route("/webhook", methods=["GET"])
