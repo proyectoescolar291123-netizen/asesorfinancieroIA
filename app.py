@@ -41,7 +41,7 @@ if faltantes:
 
 client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
-# Prioridad: Lite responde en <800ms; si entra en pico 503, entra 3.6-flash
+# Prioridad: Lite responde en <800ms; si entra en pico 503, salta a 3.6-flash
 MODELOS_A_PROBAR = ["gemini-3.5-flash-lite", "gemini-3.6-flash"]
 
 _locks_usuarios = {}
@@ -55,6 +55,7 @@ def lock_de(numero):
         return _locks_usuarios[numero]
 
 
+# --- 2. PERSISTENCIA (SQLite) ---
 @contextmanager
 def db():
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -142,6 +143,7 @@ def registrar_movimiento(numero, medio, monto, descripcion):
         )
 
 
+# --- 3. WHATSAPP & GEMINI API ---
 def enviar_mensaje_whatsapp(texto, numero):
     numero_limpio = str(numero).replace("+", "")
     url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{PHONE_ID}/messages"
@@ -160,7 +162,7 @@ def enviar_mensaje_whatsapp(texto, numero):
 def llamar_gemini(contenido_prompt, json_mode=False):
     config = types.GenerateContentConfig(response_mime_type="application/json") if json_mode else None
     for nombre_modelo in MODELOS_A_PROBAR:
-        for intento in range(2):  # Reintento anti-503
+        for intento in range(2):  # Protección anti-503
             try:
                 response = client.models.generate_content(
                     model=nombre_modelo, contents=contenido_prompt, config=config
@@ -183,7 +185,7 @@ def transcribir_audio(media_id):
         url_media = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{media_id}"
         res = requests.get(url_media, headers=headers, timeout=8)
         if res.status_code >= 400:
-            log.error(f"[AUDIO] Error obteniendo media URL: {res.status_code}")
+            log.error(f"[AUDIO] Error metadata: {res.status_code}")
             return None, True
 
         info = res.json()
@@ -195,12 +197,12 @@ def transcribir_audio(media_id):
         session.headers.update(headers)
         archivo = session.get(file_url, timeout=12)
         if archivo.status_code >= 400 or len(archivo.content) == 0:
-            log.error(f"[AUDIO] Error descargando binario: {archivo.status_code}")
+            log.error(f"[AUDIO] Error binario: {archivo.status_code}")
             return None, True
 
         contenido = archivo.content
     except requests.RequestException as e:
-        log.error(f"[AUDIO] Excepción de red: {e}")
+        log.error(f"[AUDIO] Excepción red: {e}")
         return None, True
 
     if client is None:
@@ -209,7 +211,7 @@ def transcribir_audio(media_id):
     mime_type = "audio/ogg"
 
     for nombre_modelo in MODELOS_A_PROBAR:
-        for intento in range(2):  # Reintento anti-503 para audios
+        for intento in range(2):  # Protección anti-503
             try:
                 response = client.models.generate_content(
                     model=nombre_modelo,
@@ -224,7 +226,7 @@ def transcribir_audio(media_id):
                 )
                 texto = (response.text or "").strip()
                 if texto:
-                    log.info(f"[AUDIO] Transcripción exitosa con {nombre_modelo}: {texto}")
+                    log.info(f"[AUDIO] Transcripción lograda con {nombre_modelo}: {texto}")
                     return texto, False
             except Exception as e:
                 log.warning(f"[AUDIO] Intento {intento+1} falló en {nombre_modelo}: {e}")
@@ -245,6 +247,17 @@ def verificar_firma(payload_bytes, firma_header):
     return hmac.compare_digest(esperado, firma_header)
 
 
+# --- 4. CONTROL Y NORMALIZACIÓN ---
+def normalizar_montos_texto(texto):
+    """Convierte abreviaciones como '5k' o '2.5 mil' en números reales '5000' o '2500'."""
+    t = texto.lower()
+    # 5k, 5.5k -> 5000, 5500
+    t = re.sub(r'(\d+(?:\.\d+)?)\s*k\b', lambda m: str(int(float(m.group(1)) * 1000)), t)
+    # 2 mil, 2.5 mil -> 2000, 2500
+    t = re.sub(r'(\d+(?:\.\d+)?)\s*mil\b', lambda m: str(int(float(m.group(1)) * 1000)), t)
+    return t
+
+
 def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
     if ya_procesado(msg_id):
         return
@@ -253,7 +266,7 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
         try:
             user = obtener_usuario(numero_usuario)
 
-            # 1. Registro si es primera vez que escribe
+            # 1. Registro de usuario nuevo
             if user is None:
                 crear_usuario(numero_usuario)
                 bienvenida = (
@@ -264,7 +277,7 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
                 enviar_mensaje_whatsapp(bienvenida, numero_usuario)
                 return
 
-            # 2. Bloqueo de notas de voz para plan gratuito
+            # 2. Gatekeeper Freemium: audio solo para plan PREMIUM
             if tipo == "audio" and user.get("plan") != "PREMIUM":
                 mensaje_bloqueo = (
                     "🎙️ *Función Premium*\n\n"
@@ -278,7 +291,7 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
                 enviar_mensaje_whatsapp(mensaje_bloqueo, numero_usuario)
                 return
 
-            # 3. Procesar entrada (texto o audio permitido)
+            # 3. Procesar entrada
             input_usuario = ""
             error_audio = False
 
@@ -299,7 +312,7 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
                     enviar_mensaje_whatsapp("No logré entender el mensaje 🙏 ¿Podrías repetirlo?", numero_usuario)
                 return
 
-            # 4. Comando de reinicio para la demo en vivo
+            # 4. Comando de reinicio para la demo
             if input_usuario.lower() in ["reiniciar", "reset"]:
                 actualizar_usuario(
                     numero_usuario,
@@ -329,7 +342,7 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
                 )
                 return
 
-            # 7. Operación contable normal
+            # 7. Operación contable
             procesar_operacion_financiera(numero_usuario, user, input_usuario)
 
         except Exception:
@@ -337,8 +350,22 @@ def procesar_y_responder(numero_usuario, tipo, msg, msg_id):
 
 
 def procesar_operacion_financiera(numero_usuario, user, input_usuario):
-    match_num = re.search(r"(\d+(?:\.\d+)?)", input_usuario.replace(",", ""))
-    texto_min = input_usuario.lower()
+    texto_norm = normalizar_montos_texto(input_usuario)
+    texto_min = texto_norm.lower()
+
+    # REGLA 1: FILTRO ANTI-FIADO
+    # Si detecta crédito o deuda pendiente, no toca la caja
+    palabras_fiado = ["fie", "fié", "fiado", "me debe", "le debo", "a credito", "a crédito", "por cobrar"]
+    if any(f in texto_min for f in palabras_fiado):
+        enviar_mensaje_whatsapp(
+            "📋 *Anotado como cuenta por cobrar / fiado.*\n\n"
+            "Recuerda que esto no entra a tu balance de caja hasta que el dinero sea realmente cobrado en efectivo o tarjeta. 👍",
+            numero_usuario
+        )
+        return
+
+    # REGLA 2: EXTRACCIÓN RÁPIDA (VENTA / GASTO)
+    match_num = re.search(r"(\d+(?:\.\d+)?)", texto_norm.replace(",", ""))
     palabras_venta = ["vendi", "vendí", "cobre", "cobré", "ingreso", "venta"]
     palabras_gasto = ["gaste", "gasté", "pague", "pagué", "compre", "compré", "renta", "luz", "gasto"]
 
@@ -354,10 +381,15 @@ def procesar_operacion_financiera(numero_usuario, user, input_usuario):
             "descripcion": input_usuario[:45]
         }
     else:
+        # Si no hubo match directo, clasificación inteligente con Gemini
         prompt_clasificacion = (
-            "Eres clasificador contable rápido. Mensaje: "
-            f"\"{input_usuario}\".\n"
-            "Devuelve únicamente JSON:\n"
+            "Eres clasificador contable para micronegocios en México.\n"
+            f"Mensaje: \"{texto_norm}\".\n\n"
+            "Reglas:\n"
+            "- Si es sobre FIADO o cuentas que le deben al negocio: es_movimiento=false.\n"
+            "- Si no menciona dinero cobrado o pagado: es_movimiento=false.\n"
+            "- Identifica si es 'venta' o 'gasto', método ('efectivo' o 'tarjeta') y monto.\n\n"
+            "Responde únicamente JSON:\n"
             '{"es_movimiento": true|false, "tipo": "venta"|"gasto"|null, "medio": "efectivo"|"tarjeta"|null, "monto": 100.0, "descripcion": "concepto"}'
         )
         respuesta_json = llamar_gemini(prompt_clasificacion, json_mode=True)
@@ -385,6 +417,7 @@ def procesar_operacion_financiera(numero_usuario, user, input_usuario):
         )
         return
 
+    # Consulta conversacional
     prompt_charla = (
         f"Eres Columba IA. El usuario dice: '{input_usuario}'. "
         "Responde amigable en 1 línea corta y dile que puede decirte una venta o gasto."
@@ -444,7 +477,7 @@ def procesar_confirmacion(numero_usuario, user, input_usuario):
 # --- 5. RUTAS HTTP ---
 @app.route("/")
 def index():
-    return "Columba IA v10.6 - Freemium Voice Gate", 200
+    return "Columba IA v10.7 - Production Ready", 200
 
 
 @app.route("/webhook", methods=["GET"])
