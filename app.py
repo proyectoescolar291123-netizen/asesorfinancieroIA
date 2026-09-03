@@ -40,7 +40,7 @@ if faltantes:
 
 client = genai.Client(api_key=GEMINI_KEY) if GEMINI_KEY else None
 
-MODELOS_A_PROBAR = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.5-flash-lite"]
+MODELOS_A_PROBAR = ["gemini-3.6-flash", "gemini-3.5-flash-lite"]
 
 _locks_usuarios = {}
 _locks_lock = threading.Lock()
